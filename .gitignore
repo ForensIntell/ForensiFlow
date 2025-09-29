@@ -9,4 +9,5 @@ data/
 data_log/
 weights/
 
+utils/experience/BAAI/
 .venv/
