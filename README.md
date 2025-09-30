@@ -35,7 +35,7 @@ MobiAgent: A Systematic Framework for Customizable Mobile Agents
 </div>
 
 ## News
-
+- `[2025.9.30]` 🚀 added a local experience retrieval module, supporting experience query based on task description, enhancing the intelligence and efficiency of task planning!
 - `[2025.9.29]` 🔥We've open-sourced a mixed version of MobiMind, capable of handling **both Decider and Grounder tasks**! Feel free to download and try it at [MobiMind-Mixed-7B](https://huggingface.co/IPADS-SAI/MobiMind-Mixed-7B).
 - `[2025.8.30]` We've open-sourced the MobiAgent!
 
