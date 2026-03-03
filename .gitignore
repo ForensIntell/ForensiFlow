@@ -1,0 +1,60 @@
+# ========== 环境变量 ==========
+.env
+
+# ========== Python 缓存 ==========
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# ========== 虚拟环境 ==========
+venv/
+env/
+ENV/
+.venv/
+
+# ========== IDE 配置 ==========
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ========== 数据和运行结果 ==========
+data/
+*.jpg
+*.png
+*.jpeg
+*.log
+
+# ========== 模型文件（太大，不提交到 Git） ==========
+external/ForensiVision/pt_model/
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# ========== ForensiVision 中间结果 ==========
+external/ForensiVision/core_gpt4v/
+external/ForensiVision/data/
+external/ForensiVision/debug_*.py
+external/ForensiVision/main_*.py
+external/ForensiVision/test_*.py
+
+# ========== 备份文件 ==========
+backup_old_files/
+old/
+*.bak
+*.backup
+
+# ========== 系统文件 ==========
+.DS_Store
+Thumbs.db
+
+# ========== 文档草稿 ==========
+README2.md
+
+
+# ========== 其他 ==========
+.git/
