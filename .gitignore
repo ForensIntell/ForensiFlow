@@ -1,28 +1,60 @@
-# 忽略特定文件
-screenshot*.jpg
-list.error
-tasks.json
+# ========== 环境变量 ==========
+.env
 
-# 忽略特定目录
+# ========== Python 缓存 ==========
 __pycache__/
-data/
-data_log/
-weights/
+*.py[cod]
+*$py.class
+*.so
+.Python
 
-utils/experience/BAAI/
+# ========== 虚拟环境 ==========
+venv/
+env/
+ENV/
 .venv/
-utils/experience/BAAI/
-utils/experience/all-MiniLM-L6-v2/
-data-*
-new_data/
-vectordb/
-RAG/
-utils/experience/BAAI/
 
-output*/
-utils/experience/multistage_plans_storage
-utils/experience/singletask_storage
-runner/HarmonyOS-mobiagent/
-runner/UI-TARS-agent/data_uitars-test/
-tasks/
-utils/experience/templates-new-bak.json
+# ========== IDE 配置 ==========
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ========== 数据和运行结果 ==========
+data/
+*.jpg
+*.png
+*.jpeg
+*.log
+
+# ========== 模型文件（太大，不提交到 Git） ==========
+external/VisionTasker/pt_model/
+*.pt
+*.pth
+*.onnx
+*.bin
+
+# ========== VisionTasker 中间结果 ==========
+external/VisionTasker/core_gpt4v/
+external/VisionTasker/data/
+external/VisionTasker/debug_*.py
+external/VisionTasker/main_*.py
+external/VisionTasker/test_*.py
+
+# ========== 备份文件 ==========
+backup_old_files/
+old/
+*.bak
+*.backup
+
+# ========== 系统文件 ==========
+.DS_Store
+Thumbs.db
+
+# ========== 文档草稿 ==========
+README2.md
+
+
+# ========== 其他 ==========
+.git/
