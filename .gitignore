@@ -27,6 +27,12 @@ data/
 *.png
 *.jpeg
 *.log
+*.xml
+
+# ========== 取证数据文件 ==========
+forensiflow_*.json
+whatsapp_*.json
+wechat_*.json
 
 # ========== 模型文件（太大，不提交到 Git） ==========
 external/VisionTasker/pt_model/
@@ -47,14 +53,26 @@ backup_old_files/
 old/
 *.bak
 *.backup
+*.backup.*
 
 # ========== 系统文件 ==========
 .DS_Store
 Thumbs.db
 
-# ========== 文档草稿 ==========
-README2.md
 
+# ========== 测试脚本（临时文件） ==========
+qwen*.py
+message*.py
+browse_contacts.py
+qwentest.py
+qwenapitest.py
+
+# ========== 过程性报告文档（开发记录，不提交） ==========
+CODE_REFACTORING_REPORT.md
+API_KEY_MIGRATION_GUIDE.md
+API_KEY_UNIFICATION_REPORT.md
+PROJECT_RENAMING_REPORT.md
+DIRECTORY_RENAMING_SUMMARY.md
 
 # ========== 其他 ==========
 .git/
