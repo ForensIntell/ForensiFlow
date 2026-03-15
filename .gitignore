@@ -76,3 +76,5 @@ DIRECTORY_RENAMING_SUMMARY.md
 
 # ========== 其他 ==========
 .git/
+claude_code_env.sh
+old/
