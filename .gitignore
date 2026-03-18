@@ -81,3 +81,5 @@ old/
 
 test_bge_load.py
 test_semantic_matcher.py
+whatsapp_Communicate.py
+whatsapp_informaition.py
