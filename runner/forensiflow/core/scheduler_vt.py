@@ -16,6 +16,8 @@ from .modules.screenshot import ScreenshotModule
 from .modules.executor import ExecutorModule
 from .modules.storage import StorageModule
 from .semantic_matcher import SemanticMatcher, SemanticMatcherMock
+from .rag_template_matcher import RAGTemplateMatcher, RAGTemplateMatcherMock
+from .script_registry import ScriptRegistry
 # ForensiVision 集成已移除，改用 API 调用
 
 
@@ -166,6 +168,9 @@ class TaskSchedulerVT:
         # 语义匹配器（延迟加载）
         self._semantic_matcher = None
 
+        # RAG 模板匹配器（延迟加载）
+        self._rag_matcher = None
+
         logging.info(f"TaskSchedulerVT initialized with {planner_provider.upper()} model: {self.planner_model}")
 
     @property
@@ -230,6 +235,56 @@ class TaskSchedulerVT:
                 self._semantic_matcher = SemanticMatcherMock()
 
         return self._semantic_matcher
+
+    @property
+    def rag_matcher(self):
+        """延迟初始化 RAG 模板匹配器"""
+        if self._rag_matcher is None:
+            try:
+                # 导入配置
+                import sys
+                import os
+                # 添加项目根目录到 Python 路径
+                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+                if project_root not in sys.path:
+                    sys.path.insert(0, project_root)
+
+                from runner.forensiflow.core.config import get_config
+
+                config = get_config()
+
+                # 检查是否启用
+                if not config.rag_enabled:
+                    logging.info("⚠️  RAG 模板匹配器已禁用")
+                    self._rag_matcher = RAGTemplateMatcherMock()
+                    return self._rag_matcher
+
+                # 初始化 RAG 模板匹配器
+                logging.info(f"\n{'='*60}")
+                logging.info(f"🔄 正在初始化 RAG 模板匹配器...")
+                logging.info(f"{'='*60}")
+
+                self._rag_matcher = RAGTemplateMatcher(
+                    model_path=config.rag_model_path,
+                    templates_dir=config.rag_templates_dir,
+                    top_k=config.rag_top_k,
+                    device=config.rag_device
+                )
+
+                logging.info(f"✅ RAG 模板匹配器初始化完成")
+                logging.info(f"   - 模型路径: {config.rag_model_path}")
+                logging.info(f"   - 模板目录: {config.rag_templates_dir}")
+                logging.info(f"   - Top-K: {config.rag_top_k}")
+                logging.info(f"   - 阈值: {config.rag_threshold}")
+                logging.info(f"   - 设备: {config.rag_device}")
+                logging.info(f"{'='*60}\n")
+
+            except Exception as e:
+                logging.warning(f"⚠️  RAG 模板匹配器初始化失败: {e}")
+                logging.warning(f"💡 将不使用模板示例")
+                self._rag_matcher = RAGTemplateMatcherMock()
+
+        return self._rag_matcher
 
     def _load_forensivision_models(self):
         """加载 ForensiVision 模型（整个任务期间只加载一次）"""
@@ -371,73 +426,83 @@ class TaskSchedulerVT:
         logging.info(f"原始任务: {abstract_task}")
         logging.info(f"{'='*60}\n")
 
+        # 🔍 RAG 模板检索
+        rag_examples = ""
+        try:
+            # 搜索所有应用的模板，找出最相似的任务模板
+            all_matches = []
+
+            # 遍历所有应用进行搜索
+            for app_name in self.rag_matcher.templates.keys():
+                matches = self.rag_matcher.search(app=app_name, task=abstract_task, top_k=2)
+                all_matches.extend(matches)
+
+            # 按相似度排序并取最佳匹配
+            all_matches.sort(key=lambda x: x.score, reverse=True)
+            top_matches = all_matches[:1]  # 只取最相似的1个模板
+
+            if top_matches and top_matches[0].score >= 0.6:  # 阈值可配置
+                match = top_matches[0]
+                logging.info(f"📚 RAG 检索到最佳匹配模板:")
+                logging.info(f"   [{match.template.get('app', 'Unknown')}] {match.template.get('task', 'Unknown')} (相似度: {match.score:.3f})")
+
+                # 格式化为 Few-Shot 示例
+                rag_examples = self.rag_matcher.format_prompt_examples(top_matches, max_examples=1)
+                logging.info(f"✅ RAG 示例已添加到提示词\n")
+            else:
+                logging.info(f"ℹ️  未找到足够相似的任务模板 (最佳匹配: {top_matches[0].score if top_matches else 0:.3f})\n")
+
+        except Exception as e:
+            logging.warning(f"⚠️  RAG 检索失败: {e}")
+            logging.warning(f"💡 将不使用模板示例\n")
+
         # 构建 Prompt - 要求输出步骤序列
         prompt = f"""## 角色定义
-你是一个UI自动化任务规划专家，负责理解用户意图，识别需要使用的应用，并将任务拆解为详细的、可执行的步骤序列。
+你是一个具备高度自主规划能力的UI自动化取证专家。你需要理解用户意图，并将任务拆解为可执行的步骤。
+
+## ⚠️ 重要约束（必须遵守）
+1. **应用会自动启动**：系统会自动识别并启动目标应用，你的步骤序列中**严禁包含**"启动XX应用"、"打开XX应用"这样的步骤。
+2. **从应用内开始**：步骤序列应该从应用启动后的第一个界面操作开始。
+3. **禁止搜索操作**：你的步骤序列中**严禁包含**任何搜索相关的操作（如：点击搜索框、输入搜索关键词、点击搜索按钮等）。
+
+## ⚠️ 避坑与纠错机制 (重要)
+作为通用大模型，你关于App操作的"常识"在当前的专业取证工具环境下可能会导致错误（例如：试图通过繁琐的"新建群聊"去获取联系人，而不是使用高效的快捷键）。
+为了纠正这些潜在的错误路线，系统为你提供了【参考案例】。你必须主动从案例中学习并提取以下信息来修正你的规划：
+1. **优先使用特有UI**：如果案例中使用了特定的UI元素（如"加号键"、"消息/信息图标"等），说明这是该取证系统验证过的最优入口，你应当放弃你原本规划的常规路径，优先采纳这些UI节点。
+2. **识别脚本边界**：如果案例中使用了 `CallScript` 动作，这代表该任务的深层数据抓取交由底层代码完成。你只需规划到达该界面的 UI 前置步骤，然后在最后一步规划输出该动作 `CallScript`，绝对不要试图自己去规划复杂的滚动和抓取动作！
+
+## 动作空间（你被授权使用的合法操作，严禁编造其他动作）
+- **click**: 点击操作，格式：`{{"action": "click", "target": "目标文本"}}`
+- **CallScript**: 调用底层自动化提取脚本，格式：`{{"action": "CallScript", "target": "调用的脚本名称"}}`
+- **swipe**: 滑动操作，格式：`{{"action": "swipe", "params": {{"direction": "up/down/left/right"}}}}`
+- **wait**: 等待操作，格式：`{{"action": "wait", "params": {{"duration": 秒数}}}}`
+
 
 ## 已知输入
 原始用户任务描述："{abstract_task}"
 
-## 重要提示
-⚠️ **应用会自动启动**：系统会自动识别并启动应用，你的步骤序列中**不要包含**"启动XX应用"这样的步骤。
-⚠️ **从应用内开始**：步骤序列应该从应用启动后的第一个界面操作开始。
-⚠️ **禁止搜索操作**：你的步骤序列中**不要包含**任何搜索相关的操作（如：点击搜索框、输入搜索关键词、点击搜索按钮等）。
+## 📚 参考案例（供你吸收并纠正自身规划路线）
+{rag_examples}
 
-## 任务要求
-1. **识别应用**：根据用户任务描述，识别出需要使用的应用名称（如"微信"、"淘宝"等）。
-2. **拆解步骤**：将任务拆解为详细的操作步骤序列。
-3. **格式化输出**：每个步骤必须是标准化的操作类型。
+## 输出要求
+请严格按照以下JSON格式输出（格式与参考案例保持一致）：
+- 在 reasoning 中说明你是如何利用参考案例来纠正或优化你的常规操作路线的
 
-## 支持的操作类型
-- **click**: 点击操作，格式：`{{"action": "click", "target": "目标文本"}}`
-- **input**: 输入操作，格式：`{{"action": "input", "target": "输入框文本", "text": "要输入的内容"}}`
-- **swipe**: 滑动操作，格式：`{{"action": "swipe", "params": {{"direction": "up/down/left/right"}}}}`
-- **wait**: 等待操作，格式：`{{"action": "wait", "params": {{"duration": 秒数}}}}`
-- **forensics**: 取证操作，提取应用数据，格式：`{{"action": "forensics", "params": {{"app": "应用名称", "type": "取证类型"}}}}`
-  -取证类型可选：whatsapp_chat（WhatsApp聊天记录）、wechat_chat（微信聊天记录）等
-
-## 输出格式
-请严格按照以下JSON格式输出，不要包含任何额外内容或注释：
 ```json
 {{
-  "reasoning": "简要说明你为什么选择这个应用，以及你是如何拆解任务步骤的。",
-  "app_name": "识别的应用名称（如：微信、淘宝、支付宝等）",
+  "app": "应用名称（如：微信、淘宝、WhatsApp等）",
+  "reasoning": "简要说明你的规划思路，以及你是如何吸收参考案例中的特定动作（如特定的点击目标或 CallScript）来优化路径的。",
   "steps": [
-    {{"action": "click", "target": "目标文本1"}},
-    {{"action": "swipe", "params": {{"direction": "down"}}}},
-    {{"action": "click", "target": "目标文本2"}}
-  ]
-}}
-```
-
-## 示例
-输入：打开微信朋友圈
-输出：
-```json
-{{
-  "reasoning": "用户要打开微信朋友圈，应用会自动启动微信。启动后需要点击发现，再点击朋友圈",
-  "app_name": "微信",
-  "steps": [
-    {{"action": "click", "target": "发现"}},
-    {{"action": "click", "target": "朋友圈"}}
-  ]
-}}
-```
-
-输入：打开QQ邮箱，点击群邮件
-输出：
-```json
-{{
-  "reasoning": "用户要查看QQ邮箱的群邮件。应用会自动启动QQ邮箱。启动后需要在邮件列表中找到并点击群邮件",
-  "app_name": "QQ邮箱",
-  "steps": [
-    {{"action": "click", "target": "群邮件"}}
+    {{"action": "Click", "target": "目标文本1"}},
+    {{"action": "Swipe", "params": {{"direction": "down"}}}},
+    {{"action": "Click", "target": "目标文本2"}},
+    {{"action": "CallScript", "target": "脚本名称"}}
   ]
 }}
 ```
 """
 
-        logging.info(f"发送给 LLM 的 Prompt:\n{prompt}\n")
+        logging.info(f"发送给 LLM 的 Prompt (包含 RAG {'示例' if rag_examples else '无示例'}):\n{prompt}\n")
 
         try:
             # 调用 LLM
@@ -475,9 +540,13 @@ class TaskSchedulerVT:
 
             result = json.loads(json_str)
 
-            # 验证必需字段
-            if not all(k in result for k in ["app_name", "steps"]):
-                raise ValueError("LLM 响应缺少必需字段 (app_name, steps)")
+            # 验证必需字段（支持新格式 app 和旧格式 app_name）
+            if "app" not in result and "app_name" not in result:
+                raise ValueError("LLM 响应缺少必需字段 (app 或 app_name)")
+
+            # 兼容两种格式
+            if "app_name" in result and "app" not in result:
+                result["app"] = result.pop("app_name")
 
             if not isinstance(result["steps"], list):
                 raise ValueError("steps 必须是数组")
@@ -488,11 +557,11 @@ class TaskSchedulerVT:
                     raise ValueError(f"步骤 {i+1} 缺少 action 字段")
 
             logging.info(f"✓ 规划完成:")
-            logging.info(f"  - 应用: {result['app_name']}")
+            logging.info(f"  - 应用: {result.get('app', 'Unknown')}")
             logging.info(f"  - 步骤数: {len(result['steps'])}")
             for i, step in enumerate(result["steps"]):
                 logging.info(f"    {i+1}. {step.get('action', 'unknown')} - {step.get('target', step.get('params', ''))}")
-            logging.info(f"  - 理由: {result['reasoning']}\n")
+            logging.info(f"  - 理由: {result.get('reasoning', 'N/A')}\n")
 
             return result
 
@@ -697,7 +766,7 @@ class TaskSchedulerVT:
         Returns:
             bool: 是否执行成功
         """
-        action = step.get("action", "").lower()
+        action = step.get("action", "")
         target = step.get("target", "")
         params = step.get("params", {})
 
@@ -707,28 +776,56 @@ class TaskSchedulerVT:
             # 1. 等待一下，让界面稳定
             time.sleep(1)
 
-            # 2. 根据操作类型执行
-            if action == "click":
+            # 2. 根据操作类型执行（不区分大小写）
+            action_lower = action.lower()
+
+            if action_lower == "click":
                 return self._execute_click_step(target)
 
-            elif action == "input":
+            elif action_lower == "input":
                 text = params.get("text", "")
                 return self._execute_input_step(target, text)
 
-            elif action == "swipe":
+            elif action_lower == "swipe":
                 direction = params.get("direction", "down")
                 return self._execute_swipe_step(direction)
 
-            elif action == "wait":
+            elif action_lower == "wait":
                 duration = params.get("duration", 2)
                 logging.info(f"    ⏱️ 等待 {duration} 秒...")
                 time.sleep(duration)
                 return True
 
-            elif action == "forensics":
+            elif action_lower == "forensics":
                 app_name = params.get("app", "")
                 forensics_type = params.get("type", "")
                 return self._execute_forensics_step(app_name, forensics_type)
+
+            elif action_lower == "callscript":
+                # 调用取证脚本
+                script_name = step.get("target", "")
+                logging.info(f"    📜 CallScript: {script_name}")
+
+                # 使用脚本注册表执行
+                success = ScriptRegistry.execute_script(
+                    script_name=script_name,
+                    device=self.device
+                )
+
+                if success:
+                    # 记录到 reacts
+                    self.reacts.append({
+                        "reasoning": f"执行取证脚本: {script_name}",
+                        "function": {
+                            "name": "CallScript",
+                            "parameters": {
+                                "script": script_name
+                            }
+                        },
+                        "action_index": self.step
+                    })
+
+                return success
 
             else:
                 logging.warning(f"    ⚠️ 未知操作类型: {action}")
@@ -1017,14 +1114,17 @@ class TaskSchedulerVT:
                 current_target=current_target
             )
 
-            action = decision.get("action", "").lower()
+            action = decision.get("action", "")
             reasoning = decision.get("reasoning", "")
             params = decision.get("parameters", {})
 
             logging.info(f"    🎯 LLM 决策: {action}, 理由: {reasoning}")
 
+            # 不区分大小写
+            action_lower = action.lower()
+
             # 4. 根据决策执行操作
-            if action == "done":
+            if action_lower == "done":
                 logging.info(f"    ✓ LLM 认为当前步骤已完成")
                 self.reacts.append({
                     "reasoning": reasoning,
@@ -1033,7 +1133,7 @@ class TaskSchedulerVT:
                 })
                 return True
 
-            elif action == "swipe":
+            elif action_lower == "swipe":
                 direction = params.get("direction", "down")
                 logging.info(f"    👆 执行滑动: {direction}")
                 self._execute_swipe_step(direction)
@@ -1041,7 +1141,7 @@ class TaskSchedulerVT:
                 time.sleep(1)
                 continue
 
-            elif action == "click":
+            elif action_lower == "click":
                 llm_target = decision.get("target", "")
                 if not llm_target:
                     logging.error(f"    ✗ LLM 未返回目标元素")
@@ -1093,7 +1193,7 @@ class TaskSchedulerVT:
                     time.sleep(1)
                     continue
 
-            elif action == "input":
+            elif action_lower == "input":
                 llm_target = decision.get("target", "")
                 text = params.get("text", "")
                 if not llm_target:
@@ -1385,7 +1485,7 @@ class TaskSchedulerVT:
 
     def _execute_forensics_step(self, app_name: str, forensics_type: str) -> bool:
         """
-        执行取证步骤（调用取证脚本）
+        执行取证步骤（调用取证脚本）- 已废弃，请使用 CallScript
 
         Args:
             app_name: 应用名称（如 "whatsapp"、"wechat"）
@@ -1394,6 +1494,10 @@ class TaskSchedulerVT:
         Returns:
             bool: 是否执行成功
         """
+        logging.warning(f"    ⚠️ 'forensics' 动作已废弃，请使用 'CallScript' 代替")
+        logging.warning(f"    💡 参考: {{'action': 'CallScript', 'target': '调用所有联系人信息及聊天记录脚本提取'}}")
+
+        # 为了向后兼容，仍然执行
         import time
         import sys
         import os
@@ -1712,8 +1816,8 @@ class TaskSchedulerVT:
                 # 1. LLM 任务规划 + 应用识别 + 步骤拆分
                 plan_result = self._plan_task_with_app(task)
 
-                # 2. 启动应用
-                app_name = plan_result['app_name']
+                # 2. 启动应用（兼容新格式 app 和旧格式 app_name）
+                app_name = plan_result.get('app') or plan_result.get('app_name')
                 steps = plan_result['steps']
 
                 # 初始化任务上下文管理

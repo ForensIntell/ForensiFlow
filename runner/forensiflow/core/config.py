@@ -154,6 +154,45 @@ class Config:
         """语义匹配运行设备"""
         return os.getenv("SEMANTIC_MATCHER_DEVICE", "cpu")
 
+    # ==================== RAG 模板匹配配置 ====================
+    @property
+    def rag_enabled(self) -> bool:
+        """是否启用 RAG 模板匹配"""
+        return os.getenv("RAG_ENABLED", "true").lower() == "true"
+
+    @property
+    def rag_model_path(self) -> str:
+        """RAG BGE 模型路径（bge-large-zh-v1.5）"""
+        default_path = self.project_root / "external" / "models" / "bge-large-zh-v1.5"
+        return os.getenv("RAG_MODEL_PATH", str(default_path))
+
+    @property
+    def rag_templates_dir(self) -> str:
+        """RAG 模板目录"""
+        default_path = self.project_root / "external" / "rag_templates"
+        return os.getenv("RAG_TEMPLATES_DIR", str(default_path))
+
+    @property
+    def rag_threshold(self) -> float:
+        """RAG 匹配阈值（0-1）"""
+        try:
+            return float(os.getenv("RAG_THRESHOLD", "0.75"))
+        except ValueError:
+            return 0.75
+
+    @property
+    def rag_top_k(self) -> int:
+        """RAG 返回前 K 个模板"""
+        try:
+            return int(os.getenv("RAG_TOP_K", "3"))
+        except ValueError:
+            return 3
+
+    @property
+    def rag_device(self) -> str:
+        """RAG 运行设备"""
+        return os.getenv("RAG_DEVICE", "cpu")
+
 
 # 全局配置实例（单例）
 _config_instance = None
