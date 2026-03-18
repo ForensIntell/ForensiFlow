@@ -50,7 +50,8 @@ class AndroidDevice:
             "QQ邮箱": "com.tencent.androidqqmail",
             "百度": "com.baidu.searchbox",
             "WhatsApp": "com.whatsapp",
-            "outlook": "com.microsoft.office.outlook"
+            "outlook": "com.microsoft.office.outlook",
+            "Chrome": "com.android.chrome"
         }
 
     def start_app(self, app):

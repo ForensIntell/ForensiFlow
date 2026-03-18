@@ -78,3 +78,6 @@ DIRECTORY_RENAMING_SUMMARY.md
 .git/
 claude_code_env.sh
 old/
+
+test_bge_load.py
+test_semantic_matcher.py

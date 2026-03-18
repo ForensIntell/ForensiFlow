@@ -137,6 +137,43 @@ class StorageModule:
         logging.info(f"Reacts saved to: {reacts_path}")
         return reacts_path
 
+    def save_semantic_match_result(
+        self,
+        step: int,
+        target: str,
+        match_result: Dict[str, Any],
+        candidates: List[Dict[str, Any]]
+    ) -> str:
+        """
+        Save semantic matching result details.
+
+        Args:
+            step: Step number
+            target: Target query text
+            match_result: Match result with details
+            candidates: All candidate elements with scores
+
+        Returns:
+            Path to saved match result file
+        """
+        import datetime
+
+        data = {
+            "step": step,
+            "timestamp": datetime.datetime.now().isoformat(),
+            "target": target,
+            "match_result": match_result,
+            "candidates": candidates
+        }
+
+        # 为每个步骤创建单独的匹配结果文件
+        match_path = os.path.join(self.data_dir, f"semantic_match_step_{step}.json")
+        with open(match_path, "w", encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+
+        logging.info(f"Semantic match result saved to: {match_path}")
+        return match_path
+
     def create_data_dir(self, base_dir: str) -> str:
         """
         Create a new data directory with auto-incrementing index.
