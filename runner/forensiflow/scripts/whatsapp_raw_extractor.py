@@ -94,17 +94,15 @@ class WhatsAppUniversalExtractor:
             return [int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4))]
         return [0, 0, 0, 0]
 
-    def parse_universal_raw_node(self, row_node) -> dict:
+    def parse_universal_raw_node(self, row_node, contact_name: str) -> dict:
         """
-        全量通用解析引擎：不判断类型，直接提取行内所有带有内容的 UI 节点
-
-        Args:
-            row_node: XML 节点对象
-
-        Returns:
-            包含原始组件数据的字典，如果没有提取到有效内容则返回 None
+        全量通用解析引擎：自动推理发件人身份，并提取 UI 节点
         """
         raw_data = {}
+        
+        # 默认发件人设定为当前的聊天对象
+        sender = contact_name 
+        is_system_msg = False
 
         # 遍历该行容器下的所有子孙节点
         for node in row_node.iter('node'):
@@ -112,21 +110,35 @@ class WhatsAppUniversalExtractor:
             text_content = node.get('text', '')
             desc_content = node.get('content-desc', '')
 
-            # 过滤掉没有任何实质内容的空节点
+            # ==========================================
+            # 🕵️ 发件人身份推理逻辑
+            # ==========================================
+            # 1. 识别时间分割线或系统提示 (通常居中显示日期)
+            if 'conversation_date' in res_id or 'divider' in res_id:
+                is_system_msg = True
+
+            # 2. 识别“我”发出的消息 (只有我发的消息，才带有状态回执图标)
+            if 'status' in res_id.lower() or 'message_status' in res_id.lower():
+                sender = "我 (Me)"
+
+            # 3. 识别群组中其他人的名字
+            if 'name_in_group' in res_id.lower() and text_content:
+                sender = text_content
+
+            # ==========================================
+            # 原始数据提取逻辑
+            # ==========================================
             if not text_content and not desc_content:
                 continue
 
-            # 精简 ID 名称，去除冗长前缀，如果实在没有 ID 就用类名替代
             if res_id:
                 short_id = res_id.replace('com.whatsapp:id/', '')
                 short_id = short_id.replace('android:id/', '')
             else:
                 short_id = node.get('class', 'unknown_node').split('.')[-1]
 
-            # 优先提取具体文本，其次提取无障碍描述（多为图片/视频描述）
             value = text_content if text_content else f"[描述] {desc_content}"
 
-            # 存入字典。如果遇到同名 ID（比如商业消息里的多个 button_content），则转为列表存储
             if short_id in raw_data:
                 if isinstance(raw_data[short_id], list):
                     raw_data[short_id].append(value)
@@ -135,20 +147,21 @@ class WhatsAppUniversalExtractor:
             else:
                 raw_data[short_id] = value
 
-        # 只要提取到了任何有效键值对，就返回
         if raw_data:
-            return {"raw_components": raw_data}
+            # 如果判定为系统消息，强制覆盖发送者身份
+            if is_system_msg:
+                sender = "系统/时间"
+
+            # 返回带有发件人标签的结构化数据
+            return {
+                "sender": sender,
+                "raw_components": raw_data
+            }
         return None
 
     def extract_full_chat_history(self, contact_name: str) -> list:
         """
         提取完整聊天记录（通过滑动遍历）
-
-        Args:
-            contact_name: 联系人名称
-
-        Returns:
-            聊天记录列表
         """
         chat_history = []
         seen_identifiers = set()
@@ -169,7 +182,6 @@ class WhatsAppUniversalExtractor:
                 logging.error(f"   ⚠️ XML解析失败: {e}")
                 continue
 
-            # 动态计算列表边界
             safe_top = 150
             safe_bottom = 2000
             list_node = root.find('.//node[@resource-id="android:id/list"]')
@@ -178,13 +190,11 @@ class WhatsAppUniversalExtractor:
                 safe_top += 5
                 safe_bottom -= 5
 
-            # 搜集当前屏幕上的直接行容器（ViewGroup）
             raw_rows = []
             if list_node is not None:
                 for row_node in list_node.findall('./node'):
                     bounds = self._parse_bounds(row_node.get('bounds', ''))
 
-                    # 边界裁剪：抛弃跨越安全边界的残缺行
                     if bounds[1] < safe_top or bounds[3] > safe_bottom:
                         if not (bounds[1] < safe_top and bounds[3] > safe_bottom):
                             continue
@@ -194,15 +204,13 @@ class WhatsAppUniversalExtractor:
                         'y': bounds[1]
                     })
 
-            # 基于绝对 Y 坐标全局排序
             raw_rows.sort(key=lambda x: x['y'])
 
             for item in raw_rows:
-                parsed_msg = self.parse_universal_raw_node(item['node'])
+                # 💡 核心修改：将当前的联系人名字传入解析引擎，作为推理依据
+                parsed_msg = self.parse_universal_raw_node(item['node'], contact_name)
 
                 if parsed_msg:
-                    # 使用 JSON 字符串序列化作为哈希标识，以实现完美的动态去重
-                    # sort_keys=True 保证相同字典生成的字符串绝对一致
                     identifier = json.dumps(parsed_msg, sort_keys=True)
 
                     if identifier not in seen_identifiers:
@@ -227,10 +235,9 @@ class WhatsAppUniversalExtractor:
     def browse_and_extract(self):
         """
         浏览联系人列表并提取所有聊天记录
-
-        主流程函数，自动遍历联系人并提取聊天数据
+        主流程函数，自动遍历联系人、普通群组，并穿透提取社群(Community)内的子群组数据
         """
-        logging.info(f"\n{'='*60}\n🚀 全量底层吸尘器引擎启动\n{'='*60}")
+        logging.info(f"\n{'='*60}\n🚀 全量底层吸尘器引擎启动 (支持社群穿透)\n{'='*60}")
 
         visited_count = 0
         contact_name_id = "com.whatsapp:id/conversations_row_contact_name"
@@ -268,35 +275,91 @@ class WhatsAppUniversalExtractor:
                     if text in self.visited_contacts:
                         continue
 
-                    logging.info(f"👉 进入目标 #{visited_count + 1}: {text}")
+                    logging.info(f"👉 锁定目标 #{visited_count + 1}: {text}")
 
                     try:
                         elem.click(timeout=3)
                         self.visited_contacts.add(text)
                         visited_count += 1
-
                         time.sleep(2.0)
 
-                        msgs = self.extract_full_chat_history(text)
+                        # ==========================================
+                        # 💡 核心修复：社群 (Community) 穿透检测逻辑
+                        # ==========================================
+                        if self.d(resourceId="com.whatsapp:id/community_navigation_subgroup_recycler_view").exists:
+                            logging.info(f"   🏘️ 发现社群导航页: [{text}]，启动子群穿透模式...")
+                            community_name = text
+                            subgroup_visited = set()
+                            no_new_subgroups = 0
+                            
+                            while True:
+                                subgroup_elems = []
+                                for sub_elem in self.d(resourceId=contact_name_id):
+                                    if not sub_elem.exists: continue
+                                    sub_text = sub_elem.info.get('text', '')
+                                    if sub_text and sub_text not in subgroup_visited:
+                                        subgroup_elems.append((sub_text, sub_elem))
 
-                        contact_data = {
-                            "contact_name": text,
-                            "message_count": len(msgs),
-                            "messages": msgs
-                        }
+                                if not subgroup_elems:
+                                    no_new_subgroups += 1
+                                    if no_new_subgroups >= 2:
+                                        logging.info(f"   ✅ 社群 [{community_name}] 内的所有子群已遍历完毕。")
+                                        break
+                                else:
+                                    no_new_subgroups = 0
 
-                        self.append_contact_to_json(contact_data)
+                                for sub_text, sub_elem in subgroup_elems:
+                                    if sub_text in subgroup_visited: continue
+                                    logging.info(f"      ↳ 进入社群子群组: [{sub_text}]")
+                                    
+                                    sub_elem.click(timeout=3)
+                                    time.sleep(2.0)
 
-                        self.d.press("back")
-                        time.sleep(1.5)
+                                    # 在子群组内拉取聊天记录
+                                    full_name = f"【社群】{community_name} -> {sub_text}"
+                                    msgs = self.extract_full_chat_history(full_name)
+
+                                    contact_data = {
+                                        "contact_name": full_name,
+                                        "message_count": len(msgs),
+                                        "messages": msgs
+                                    }
+                                    self.append_contact_to_json(contact_data)
+
+                                    self.d.press("back") # 退回到社群导航页
+                                    subgroup_visited.add(sub_text)
+                                    time.sleep(1.5)
+
+                                # 在社群导航页内向下滑动，寻找更多子群
+                                self.d.swipe(0.5, 0.8, 0.5, 0.2, duration=0.5)
+                                time.sleep(1.5)
+
+                            # 社群遍历结束，退回到主聊天列表
+                            self.d.press("back")
+                            time.sleep(1.5)
+
+                        # ==========================================
+                        # 正常逻辑：普通联系人或普通群组
+                        # ==========================================
+                        else:
+                            msgs = self.extract_full_chat_history(text)
+                            contact_data = {
+                                "contact_name": text,
+                                "message_count": len(msgs),
+                                "messages": msgs
+                            }
+                            self.append_contact_to_json(contact_data)
+
+                            self.d.press("back") # 退回到主聊天列表
+                            time.sleep(1.5)
 
                     except Exception as e:
-                        logging.error(f"✗ 处理 [{text}] 时发生异常: {e}")
+                        logging.error(f"   ✗ 处理 [{text}] 时发生异常: {e}")
                         self.d.press("back")
                         time.sleep(1)
 
             if visited_count < self.max_contacts and no_new_contacts_streak < MAX_CONTACT_STREAK:
-                logging.info("⬇️ 列表向下滑动获取新目标...")
+                logging.info("⬇️ 主列表向下滑动获取新目标...")
                 self.d.swipe(0.5, 0.8, 0.5, 0.2, duration=0.5)
                 time.sleep(1.5)
 

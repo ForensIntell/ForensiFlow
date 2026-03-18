@@ -14,8 +14,8 @@ from typing import Dict, Any, List, Optional, Callable
 
 from .modules.screenshot import ScreenshotModule
 from .modules.executor import ExecutorModule
-from .modules.visualizer import VisualizerModule
 from .modules.storage import StorageModule
+from .semantic_matcher import SemanticMatcher, SemanticMatcherMock
 # VisionTasker 集成已移除，改用 API 调用
 
 
@@ -48,7 +48,7 @@ class TaskSchedulerVT:
         CHATGLM_DEFAULT_MODEL = "glm-4-flash"
 
         # VisionTasker 路径配置
-        VISIONTASKER_PATH = "/path/to/ForensiFlow/external/VisionTasker"
+        VISIONTASKER_PATH = "/root/MobiAgent/external/VisionTasker"
         MODEL_PATH = "pt_model/yolo_mdl.pt"
         MODEL_PREFIX = "pt_model/yolo_vins_"
         MODEL_SUFFIX = "_mdl.pt"
@@ -82,7 +82,6 @@ class TaskSchedulerVT:
         StepConfig(name="xml_matching"),       # XML 文本匹配（快速匹配）
         StepConfig(name="element_matching"),   # 元素匹配（VisionTasker fallback）
         StepConfig(name="execute", post_wait=5.0),  # 执行后等待 5 秒
-        StepConfig(name="visualize"),
         StepConfig(name="store"),
     ]
 
@@ -124,7 +123,6 @@ class TaskSchedulerVT:
         # Initialize modules
         self.screenshot_module = ScreenshotModule(resize_factor=resize_factor)
         self.executor_module = ExecutorModule(device)
-        self.visualizer_module = VisualizerModule()
         self.storage_module = StorageModule(data_dir)
 
         # VisionTasker 模块引用（直接导入，保持模型常驻内存）
@@ -165,6 +163,9 @@ class TaskSchedulerVT:
         self._current_step_index: int = 0  # 当前执行到的步骤索引
         self._failed_attempts: List[Dict[str, Any]] = []  # 失败的尝试记录
 
+        # 语义匹配器（延迟加载）
+        self._semantic_matcher = None
+
         logging.info(f"TaskSchedulerVT initialized with {planner_provider.upper()} model: {self.planner_model}")
 
     @property
@@ -181,6 +182,54 @@ class TaskSchedulerVT:
             except Exception as e:
                 logging.error(f"Failed to initialize {self.planner_provider.upper()} API client: {e}")
         return self._planner_client
+
+    @property
+    def semantic_matcher(self):
+        """延迟初始化语义匹配器"""
+        if self._semantic_matcher is None:
+            try:
+                # 导入配置
+                import sys
+                import os
+                # 添加项目根目录到 Python 路径
+                project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
+                if project_root not in sys.path:
+                    sys.path.insert(0, project_root)
+
+                from runner.forensiflow.core.config import get_config
+
+                config = get_config()
+
+                # 检查是否启用
+                if not config.semantic_matcher_enabled:
+                    logging.info("⚠️  语义匹配器已禁用，将直接调用 LLM")
+                    self._semantic_matcher = SemanticMatcherMock()
+                    return self._semantic_matcher
+
+                # 初始化语义匹配器
+                logging.info(f"\n{'='*60}")
+                logging.info(f"🔄 正在初始化语义匹配器...")
+                logging.info(f"{'='*60}")
+
+                self._semantic_matcher = SemanticMatcher(
+                    model_path=config.semantic_matcher_model_path,
+                    threshold=config.semantic_matcher_threshold,
+                    cache_size=config.semantic_matcher_cache_size,
+                    device=config.semantic_matcher_device
+                )
+
+                logging.info(f"✅ 语义匹配器初始化完成")
+                logging.info(f"   - 模型路径: {config.semantic_matcher_model_path}")
+                logging.info(f"   - 阈值: {config.semantic_matcher_threshold}")
+                logging.info(f"   - 设备: {config.semantic_matcher_device}")
+                logging.info(f"{'='*60}\n")
+
+            except Exception as e:
+                logging.warning(f"⚠️  语义匹配器初始化失败: {e}")
+                logging.warning(f"💡 将直接使用 LLM 匹配")
+                self._semantic_matcher = SemanticMatcherMock()
+
+        return self._semantic_matcher
 
     def _load_visiontasker_models(self):
         """加载 VisionTasker 模型（整个任务期间只加载一次）"""
@@ -1422,7 +1471,12 @@ class TaskSchedulerVT:
         current_target: str = ""
     ) -> Dict[str, Any]:
         """
-        使用 LLM 决策操作
+        使用语义匹配器 + LLM 决策操作
+
+        流程：
+        1. 先使用 BGE 语义匹配进行快速匹配
+        2. 如果匹配成功（score >= 阈值），直接返回结果，跳过 LLM 调用
+        3. 如果匹配失败，降级到 LLM 进行智能决策
 
         Args:
             ui_elements: VisionTasker 检测到的 UI 元素列表
@@ -1434,6 +1488,114 @@ class TaskSchedulerVT:
         Returns:
             决策字典，包含 action, target, reasoning
         """
+        # 🎯 第一层：语义匹配（BGE 快速匹配）
+        try:
+            logging.info(f"\n{'='*60}")
+            logging.info(f"🎯 步骤 1/2: 尝试语义匹配...")
+            logging.info(f"   目标: {task_target}")
+            logging.info(f"   候选数: {len(ui_elements)}")
+            logging.info(f"{'='*60}\n")
+
+            # 提取关键目标文本（去除动作前缀）
+            target_text = task_target
+            for prefix in ["点击", "输入", "滑动", "查找"]:
+                if target_text.startswith(prefix):
+                    target_text = target_text[len(prefix):]
+                    break
+
+            # 检查是否有语义匹配器可用
+            if hasattr(self.semantic_matcher, 'model'):
+                # 使用 BGE 匹配
+                from runner.forensiflow.core.semantic_matcher import MatchResult
+
+                match_result = self.semantic_matcher._bge_match(target_text, ui_elements)
+
+                # 检查分数是否达标
+                if match_result.score >= self.semantic_matcher.threshold:
+                    # 适配 VisionTasker 格式
+                    element_text = match_result.element.get('text_content') or 'Unknown'
+                    logging.info(f"✅ 语义匹配成功!")
+                    logging.info(f"   匹配元素: {element_text}")
+                    logging.info(f"   相似度: {match_result.score:.3f} >= {self.semantic_matcher.threshold}")
+                    logging.info(f"   跳过 LLM 调用")
+
+                    # 保存语义匹配详细结果
+                    try:
+                        match_result_data = {
+                            "success": True,
+                            "score": match_result.score,
+                            "threshold": self.semantic_matcher.threshold,
+                            "matched_element": {
+                                "text": element_text,
+                                "class": match_result.element.get('class', 'Unknown'),
+                                "id": match_result.element.get('id', 'Unknown'),
+                                "location": match_result.element.get('location', {})
+                            },
+                            "method": "bge"
+                        }
+
+                        # 只保存 Top-10 候选（避免文件过大）
+                        top_candidates = match_result.all_candidates[:10] if match_result.all_candidates else []
+
+                        self.storage_module.save_semantic_match_result(
+                            step=self.step,
+                            target=target_text,
+                            match_result=match_result_data,
+                            candidates=top_candidates
+                        )
+                    except Exception as e:
+                        logging.warning(f"⚠️  保存语义匹配结果失败: {e}")
+
+                    # 构造决策结果
+                    return {
+                        "action": current_action,
+                        "target": element_text,
+                        "reasoning": f"语义匹配成功 (BGE, score={match_result.score:.3f})",
+                        "method": "semantic_match",
+                        "element": match_result.element
+                    }
+                else:
+                    logging.info(f"⚠️  语义匹配未达到阈值")
+                    logging.info(f"   最高分: {match_result.score:.3f} < {self.semantic_matcher.threshold}")
+                    logging.info(f"   降级到 LLM 决策")
+
+                    # 保存未达标的匹配结果
+                    try:
+                        match_result_data = {
+                            "success": False,
+                            "score": match_result.score,
+                            "threshold": self.semantic_matcher.threshold,
+                            "reason": "Score below threshold",
+                            "matched_element": {
+                                "text": match_result.element.get('text_content', 'Unknown'),
+                                "class": match_result.element.get('class', 'Unknown'),
+                                "id": match_result.element.get('id', 'Unknown'),
+                                "location": match_result.element.get('location', {})
+                            },
+                            "method": "bge"
+                        }
+
+                        top_candidates = match_result.all_candidates[:10] if match_result.all_candidates else []
+
+                        self.storage_module.save_semantic_match_result(
+                            step=self.step,
+                            target=target_text,
+                            match_result=match_result_data,
+                            candidates=top_candidates
+                        )
+                    except Exception as e:
+                        logging.warning(f"⚠️  保存语义匹配结果失败: {e}")
+
+        except Exception as e:
+            logging.warning(f"⚠️  语义匹配失败: {e}，降级到 LLM")
+            import traceback
+            traceback.print_exc()
+
+        # 🤖 第二层：LLM 智能决策
+        logging.info(f"\n{'='*60}")
+        logging.info(f"🤖 步骤 2/2: 调用 LLM 进行智能决策...")
+        logging.info(f"{'='*60}\n")
+
         if not self.planner_client:
             raise RuntimeError("Planner client not initialized")
 
@@ -1529,6 +1691,9 @@ class TaskSchedulerVT:
         logging.info(f"\n{'='*60}")
         logging.info(f"📁 本次运行数据将保存到: {self.run_data_dir}")
         logging.info(f"{'='*60}\n")
+
+        # 更新 storage_module 的目录到本次运行目录
+        self.storage_module.data_dir = self.run_data_dir
 
         # Reset state
         self.history = []
@@ -1847,8 +2012,6 @@ class TaskSchedulerVT:
             return self._step_element_matching(context)
         elif step_name == "execute":
             return self._step_execute(context)
-        elif step_name == "visualize":
-            return self._step_visualize(context)
         elif step_name == "store":
             return self._step_store(context)
         else:
@@ -2417,20 +2580,6 @@ class TaskSchedulerVT:
 
             logging.info(f"    Action executed successfully")
 
-        return context
-
-    def _step_visualize(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute visualization step."""
-        execution_result = context.get("execution_result")
-        if execution_result:
-            screenshot_path = context["screenshot"]["path"]
-            viz_files = self.visualizer_module.visualize_action(
-                execution_result,
-                screenshot_path,
-                self.run_data_dir,  # Use run-specific directory
-                self.step
-            )
-            logging.info(f"    ✓ Visualization created: {list(viz_files.keys())}")
         return context
 
     def _step_store(self, context: Dict[str, Any]) -> Dict[str, Any]:

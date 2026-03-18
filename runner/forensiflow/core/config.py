@@ -121,6 +121,39 @@ class Config:
         """日志级别"""
         return os.getenv("LOG_LEVEL", "INFO")
 
+    # ==================== 语义匹配配置 ====================
+    @property
+    def semantic_matcher_enabled(self) -> bool:
+        """是否启用语义匹配器"""
+        return os.getenv("SEMANTIC_MATCHER_ENABLED", "true").lower() == "true"
+
+    @property
+    def semantic_matcher_model_path(self) -> str:
+        """BGE 模型路径"""
+        default_path = self.project_root / "external" / "models" / "bge-small-zh-v1.5"
+        return os.getenv("SEMANTIC_MATCHER_MODEL_PATH", str(default_path))
+
+    @property
+    def semantic_matcher_threshold(self) -> float:
+        """语义匹配阈值（0-1）"""
+        try:
+            return float(os.getenv("SEMANTIC_MATCHER_THRESHOLD", "0.75"))
+        except ValueError:
+            return 0.75
+
+    @property
+    def semantic_matcher_cache_size(self) -> int:
+        """语义匹配缓存大小"""
+        try:
+            return int(os.getenv("SEMANTIC_MATCHER_CACHE_SIZE", "5"))
+        except ValueError:
+            return 5
+
+    @property
+    def semantic_matcher_device(self) -> str:
+        """语义匹配运行设备"""
+        return os.getenv("SEMANTIC_MATCHER_DEVICE", "cpu")
+
 
 # 全局配置实例（单例）
 _config_instance = None
