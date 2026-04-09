@@ -51,7 +51,8 @@ class AndroidDevice:
             "百度": "com.baidu.searchbox",
             "WhatsApp": "com.whatsapp",
             "outlook": "com.microsoft.office.outlook",
-            "Chrome": "com.android.chrome"
+            "Chrome": "com.android.chrome",
+            "telegram": "org.telegram.messenger",
         }
 
     def start_app(self, app):
