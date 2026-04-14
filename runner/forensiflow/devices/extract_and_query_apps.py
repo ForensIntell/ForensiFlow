@@ -217,7 +217,9 @@ def main():
     with open(stats_file, 'w', encoding='utf-8') as f:
         f.write("应用信息统计\n")
         f.write("=" * 80 + "\n\n")
-        f.write(f"总应用数: {summary['total_apps']}\n\n")
+        f.write(f"总应用数: {summary['total_apps']}\n")
+        f.write(f"查询成功: {summary['success_count']}\n")
+        f.write(f"查询失败: {summary['failed_count']}\n\n")
 
         f.write("分类统计:\n")
         f.write("-" * 80 + "\n")
@@ -229,17 +231,18 @@ def main():
             f.write(f"  {category}: {count}\n")
 
     print(f"📊 统计信息: {stats_file}")
+    print(f"   ✅ 成功: {summary['success_count']}, ❌ 失败: {summary['failed_count']}")
 
-    # 6. 生成失败列表
+    # 6. 生成失败列表（从缓存中获取已知失败的包名）
     failed_packages = set(packages) - set(results.keys())
     if failed_packages:
         failed_file = output_dir / "failed_packages.txt"
         with open(failed_file, 'w', encoding='utf-8') as f:
-            f.write("# 查询失败的包名列表\n")
+            f.write("# 查询失败的包名列表（已缓存，不会重复查询）\n")
             f.write(f"# 共 {len(failed_packages)} 个应用查询失败\n\n")
             for pkg in sorted(failed_packages):
                 f.write(f"{pkg}\n")
-        print(f"⚠️  失败列表: {failed_file} ({len(failed_packages)} 个)")
+        print(f"⚠️  失败列表: {failed_file} ({len(failed_packages)} 个，已缓存)")
 
     print("\n" + "=" * 80)
     print("✅ 所有文件已生成到:", args.output_dir)

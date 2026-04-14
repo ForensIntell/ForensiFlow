@@ -18,6 +18,7 @@ from .modules.storage import StorageModule
 from .semantic_matcher import SemanticMatcher, SemanticMatcherMock
 from .rag_template_matcher import RAGTemplateMatcher, RAGTemplateMatcherMock
 from .script_registry import ScriptRegistry
+from .xml_utils import XMLSimplifier
 # ForensiVision 集成已移除，改用 API 调用
 
 
@@ -46,7 +47,7 @@ class TaskSchedulerVT:
         CHATGLM_API_URL = "https://open.bigmodel.cn/api/paas/v4"
 
         # 默认模型配置
-        QWEN_DEFAULT_MODEL = "qwen-plus"  # qwen-turbo, qwen-plus, qwen-max
+        QWEN_DEFAULT_MODEL = "qwen3.5-27b"  # qwen-turbo, qwen-plus, qwen-max
         CHATGLM_DEFAULT_MODEL = "glm-4-flash"
 
         # ForensiVision 路径配置
@@ -126,6 +127,9 @@ class TaskSchedulerVT:
         self.screenshot_module = ScreenshotModule(resize_factor=resize_factor)
         self.executor_module = ExecutorModule(device)
         self.storage_module = StorageModule(data_dir)
+
+        # Initialize XML simplifier
+        self.xml_simplifier = XMLSimplifier(max_length=12000)
 
         # ForensiVision 模块引用（直接导入，保持模型常驻内存）
         self._vt_models_loaded = False
@@ -400,16 +404,18 @@ class TaskSchedulerVT:
         except Exception as e:
             logging.warning(f"释放模型资源时出现警告: {e}")
 
-    def _plan_task_with_app(self, abstract_task: str) -> Dict[str, Any]:
+    def _plan_task_with_app(self, abstract_task: str, app_name: str = None, external_template: Dict[str, Any] = None) -> Dict[str, Any]:
         """
         使用 LLM 规划任务并识别应用，生成可执行的步骤序列
 
         Args:
             abstract_task: 抽象任务描述，如"打开微信朋友圈"
+            app_name: 应用名称（如果已知，会提供给 planner）
+            external_template: 外部传入的模板（来自调度器选择器，已通过 BGE 匹配）
 
         Returns:
             {
-                "app_name": "微信",
+                "app": "应用名称",
                 "reasoning": "选择理由",
                 "steps": [
                     {"action": "click", "target": "我的"},
@@ -424,37 +430,61 @@ class TaskSchedulerVT:
         logging.info(f"\n{'='*60}")
         logging.info(f"🤖 LLM 任务规划中...")
         logging.info(f"原始任务: {abstract_task}")
+        if app_name:
+            logging.info(f"目标应用: {app_name}")
         logging.info(f"{'='*60}\n")
 
-        # 🔍 RAG 模板检索
+        # 🔍 RAG 模板检索（使用外部传入的模板）
         rag_examples = ""
-        try:
-            # 搜索所有应用的模板，找出最相似的任务模板
-            all_matches = []
-
-            # 遍历所有应用进行搜索
-            for app_name in self.rag_matcher.templates.keys():
-                matches = self.rag_matcher.search(app=app_name, task=abstract_task, top_k=2)
-                all_matches.extend(matches)
-
-            # 按相似度排序并取最佳匹配
-            all_matches.sort(key=lambda x: x.score, reverse=True)
-            top_matches = all_matches[:1]  # 只取最相似的1个模板
-
-            if top_matches and top_matches[0].score >= 0.6:  # 阈值可配置
-                match = top_matches[0]
-                logging.info(f"📚 RAG 检索到最佳匹配模板:")
-                logging.info(f"   [{match.template.get('app', 'Unknown')}] {match.template.get('task', 'Unknown')} (相似度: {match.score:.3f})")
+        if external_template:
+            # 使用调度器选择器传入的模板
+            try:
+                logging.info(f"📚 使用调度器选择器提供的模板:")
+                logging.info(f"   [{external_template.get('app', 'Unknown')}] {external_template.get('task', 'Unknown')}")
 
                 # 格式化为 Few-Shot 示例
-                rag_examples = self.rag_matcher.format_prompt_examples(top_matches, max_examples=1)
-                logging.info(f"✅ RAG 示例已添加到提示词\n")
-            else:
-                logging.info(f"ℹ️  未找到足够相似的任务模板 (最佳匹配: {top_matches[0].score if top_matches else 0:.3f})\n")
+                from .rag_template_matcher import TemplateMatch
+                mock_match = TemplateMatch(
+                    template=external_template,
+                    score=1.0,  # 外部传入的模板已经通过阈值筛选
+                    rank=1
+                )
+                rag_examples = self.rag_matcher.format_prompt_examples([mock_match], max_examples=1)
+                logging.info(f"✅ 外部模板示例已添加到提示词\n")
 
-        except Exception as e:
-            logging.warning(f"⚠️  RAG 检索失败: {e}")
-            logging.warning(f"💡 将不使用模板示例\n")
+            except Exception as e:
+                logging.warning(f"⚠️  外部模板格式化失败: {e}")
+                logging.warning(f"💡 将不使用模板示例\n")
+        else:
+            # 回退到内部 RAG 检索（如果启用了 rag_matcher）
+            if hasattr(self, 'rag_matcher') and self.rag_matcher:
+                try:
+                    # 搜索所有应用的模板，找出最相似的任务模板
+                    all_matches = []
+
+                    # 遍历所有应用进行搜索
+                    for app_name in self.rag_matcher.templates.keys():
+                        matches = self.rag_matcher.search(app=app_name, task=abstract_task, top_k=2)
+                        all_matches.extend(matches)
+
+                    # 按相似度排序并取最佳匹配
+                    all_matches.sort(key=lambda x: x.score, reverse=True)
+                    top_matches = all_matches[:1]  # 只取最相似的1个模板
+
+                    if top_matches and top_matches[0].score >= 0.6:  # 阈值可配置
+                        match = top_matches[0]
+                        logging.info(f"📚 内部 RAG 检索到最佳匹配模板:")
+                        logging.info(f"   [{match.template.get('app', 'Unknown')}] {match.template.get('task', 'Unknown')} (相似度: {match.score:.3f})")
+
+                        # 格式化为 Few-Shot 示例
+                        rag_examples = self.rag_matcher.format_prompt_examples(top_matches, max_examples=1)
+                        logging.info(f"✅ RAG 示例已添加到提示词\n")
+                    else:
+                        logging.info(f"ℹ️  未找到足够相似的任务模板 (最佳匹配: {top_matches[0].score if top_matches else 0:.3f})\n")
+
+                except Exception as e:
+                    logging.warning(f"⚠️  内部 RAG 检索失败: {e}")
+                    logging.warning(f"💡 将不使用模板示例\n")
 
         # 构建 Prompt - 要求输出步骤序列
         prompt = f"""## 角色定义
@@ -480,6 +510,7 @@ class TaskSchedulerVT:
 
 ## 已知输入
 原始用户任务描述："{abstract_task}"
+""" + (f"\n目标应用：{app_name}" if app_name else "") + f"""
 
 ## 📚 参考案例（供你吸收并纠正自身规划路线）
 {rag_examples}
@@ -487,10 +518,10 @@ class TaskSchedulerVT:
 ## 输出要求
 请严格按照以下JSON格式输出（格式与参考案例保持一致）：
 - 在 reasoning 中说明你是如何利用参考案例来纠正或优化你的常规操作路线的
-
+""" + (f"- app 字段必须使用目标应用名称：{app_name}" if app_name else "- app 字段根据任务描述推断应用名称") + """
 ```json
 {{
-  "app": "应用名称（如：微信、淘宝、WhatsApp等）",
+  "app": """ + (f'"{app_name}"' if app_name else '"应用名称（如：微信、淘宝、WhatsApp等）"') + """,
   "reasoning": "简要说明你的规划思路，以及你是如何吸收参考案例中的特定动作（如特定的点击目标或 CallScript）来优化路径的。",
   "steps": [
     {{"action": "Click", "target": "目标文本1"}},
@@ -1766,7 +1797,8 @@ class TaskSchedulerVT:
         task: str,
         max_steps: int = 35,
         bbox_flag: bool = True,
-        use_abstract_task: bool = False  # 新增：是否使用抽象任务模式
+        use_abstract_task: bool = False,  # 新增：是否使用抽象任务模式
+        rag_template: Dict[str, Any] = None  # 新增：外部传入的 RAG 模板（来自调度器选择器）
     ) -> Dict[str, Any]:
         """
         Run a complete task execution loop.
@@ -1778,6 +1810,7 @@ class TaskSchedulerVT:
             max_steps: Maximum number of steps to execute
             bbox_flag: Whether to use bbox for grounding (not used in VT mode)
             use_abstract_task: 是否使用抽象任务模式（True=先规划+启动应用+执行步骤序列）
+            rag_template: 外部传入的 RAG 模板（由调度器选择器提供，已通过 BGE 匹配）
 
         Returns:
             Dictionary with execution results
@@ -1814,9 +1847,11 @@ class TaskSchedulerVT:
 
             try:
                 # 1. LLM 任务规划 + 应用识别 + 步骤拆分
-                plan_result = self._plan_task_with_app(task)
+                # 使用外部传入的模板（如果提供）
+                # 传递应用名称给 planner
+                plan_result = self._plan_task_with_app(task, app_name=app, external_template=rag_template)
 
-                # 2. 启动应用（兼容新格式 app 和旧格式 app_name）
+                # 2. 启动应用（从模板第一步提取包名）
                 app_name = plan_result.get('app') or plan_result.get('app_name')
                 steps = plan_result['steps']
 
@@ -1826,11 +1861,32 @@ class TaskSchedulerVT:
                 self._current_step_index = 0
                 self._failed_attempts = []
 
+                # 确定包名（优先使用模板中的包名）
+                package_name = None
+                if rag_template and rag_template.get('steps'):
+                    # 从模板的第一步提取包名
+                    first_step = rag_template['steps'][0]
+                    if first_step.get('action') == 'Launch' and first_step.get('package_name'):
+                        package_name = first_step['package_name']
+                        # 同时更新应用名称（使用模板中的完整名称）
+                        app_name_from_template = first_step.get('app_name', app_name)
+                        if app_name_from_template:
+                            app_name = app_name_from_template
+
                 logging.info(f"\n{'='*60}")
                 logging.info(f"📱 启动应用: {app_name}")
+                if package_name:
+                    logging.info(f"   包名: {package_name} (来自模板)")
+                    logging.info(f"   来源: {rag_template.get('task', 'Unknown')}")
                 logging.info(f"{'='*60}\n")
 
-                self.device.start_app(app_name)
+                # 启动应用
+                if package_name:
+                    # 直接使用包名启动（来自模板）
+                    self.device.app_start(package_name)
+                else:
+                    # 回退到应用名称查找（硬编码字典）
+                    self.device.start_app(app_name)
 
                 # 3. 等待应用加载
                 logging.info(f"⏳ 等待应用加载...")
@@ -1877,85 +1933,10 @@ class TaskSchedulerVT:
 
                 logging.info(f"\n{'='*60}")
                 logging.info(f"✓ 步骤序列执行完成")
+                logging.info(f"✓ 任务执行结束，不再检查是否完成")
                 logging.info(f"{'='*60}\n")
 
-                # 6. 检查任务是否完成，如果未完成则继续规划并执行
-                max_completion_checks = 10  # 最多检查 10 次，防止无限循环
-                completion_check_count = 0
-                task_completed = False
-
-                while completion_check_count < max_completion_checks:
-                    completion_check_count += 1
-
-                    logging.info(f"\n{'='*60}")
-                    logging.info(f"🔄 任务完成检查 #{completion_check_count}/{max_completion_checks}")
-                    logging.info(f"{'='*60}\n")
-
-                    # 调用 planner 判断任务是否完成
-                    check_result = self._check_task_completion_and_plan_next()
-
-                    if check_result["completed"]:
-                        logging.info(f"✓ 任务已完成: {check_result['reasoning']}")
-                        task_completed = True
-                        break
-                    else:
-                        logging.info(f"⚠️ 任务未完成: {check_result['reasoning']}")
-
-                        # 获取 planner 生成的新步骤
-                        new_steps = check_result["new_steps"]
-
-                        if not new_steps:
-                            logging.warning(f"⚠️ LLM 判断任务未完成，但没有生成新步骤，停止任务")
-                            break
-
-                        logging.info(f"\n{'='*60}")
-                        logging.info(f"📋 执行新步骤（共 {len(new_steps)} 步）")
-                        logging.info(f"{'='*60}\n")
-
-                        # 更新 planned_steps 为新步骤
-                        self._planned_steps = new_steps
-                        self._current_step_index = 0
-                        self._failed_attempts = []
-
-                        # 执行新步骤
-                        for i, step in enumerate(new_steps):
-                            # 更新当前步骤索引
-                            self._current_step_index = i
-
-                            self.step = len(self.actions) + 1
-                            action = step.get("action", "")
-
-                            logging.info(f"\n{'─'*60}")
-                            logging.info(f"新步骤 {i+1}/{len(new_steps)}: {action.upper()}")
-                            logging.info(f"{'─'*60}\n")
-
-                            # 执行步骤
-                            success = self._execute_predefined_step(step)
-
-                            if not success:
-                                logging.error(f"✗ 步骤执行失败，停止任务")
-                                break
-
-                            # 步骤成功后清空失败尝试记录
-                            self._failed_attempts = []
-
-                            # 记录动作
-                            self.actions.append({
-                                "type": action,
-                                "step": self.step,
-                                "action_index": self.step
-                            })
-
-                        logging.info(f"\n{'='*60}")
-                        logging.info(f"✓ 新步骤序列执行完成")
-                        logging.info(f"{'='*60}\n")
-
-                        # 继续下一轮检查
-
-                if completion_check_count >= max_completion_checks:
-                    logging.warning(f"⚠️ 达到最大检查次数 ({max_completion_checks})，停止任务")
-
-                # 保存最终结果
+                # 保存最终结果（任务执行完成后直接结束）
                 self.storage_module.save_actions(app_name, old_task, task, self.actions)
                 self.storage_module.save_reacts(self.reacts)
 
@@ -2551,7 +2532,10 @@ class TaskSchedulerVT:
         return search_elements(ui_elements)
 
     def _find_element_in_xml(self, xml_content, target_text):
-        """从 Android UI XML 中查找匹配的元素.
+        """从简化的 Android UI XML 中查找匹配的元素.
+
+        修改：先使用 XMLSimplifier 简化 XML，再在简化后的树中搜索。
+        这样可以减少 90% 的无关节点，提高匹配准确率。
 
         Args:
             xml_content: Android dump_hierarchy 返回的 XML 字符串
@@ -2562,11 +2546,21 @@ class TaskSchedulerVT:
         """
         import xml.etree.ElementTree as ET
 
+        # 1. 先简化 XML（减少 90% 的无关节点）
         try:
-            root = ET.fromstring(xml_content)
-        except ET.ParseError as e:
-            logging.error(f"    Failed to parse XML: {e}")
-            return None
+            simplified_root = self.xml_simplifier.simplify_to_tree(xml_content)
+            if simplified_root is None:
+                logging.debug(f"    XML 简化失败，回退到原始 XML")
+                # 回退：使用原始 XML
+                simplified_root = ET.fromstring(xml_content)
+        except Exception as e:
+            logging.warning(f"    XML 简化异常: {e}，使用原始 XML")
+            # 回退：使用原始 XML
+            try:
+                simplified_root = ET.fromstring(xml_content)
+            except ET.ParseError as parse_error:
+                logging.error(f"    原始 XML 解析也失败: {parse_error}")
+                return None
 
         def parse_bounds(bounds_str):
             """解析 bounds 属性: [left,top][right,bottom]"""
@@ -2583,10 +2577,10 @@ class TaskSchedulerVT:
             return None
 
         def search_node(node):
-            """递归搜索节点树"""
-            # 获取节点的 text 属性
+            """递归搜索简化后的节点树"""
+            # 获取节点的文本属性
             text = node.get('text', '')
-            content_description = node.get('content-description', '')
+            content_description = node.get('content-desc', '')
             resource_id = node.get('resource-id', '')
 
             # 检查各种文本属性
@@ -2599,42 +2593,20 @@ class TaskSchedulerVT:
                     "text": text,
                     "class": node.get('class', ''),
                     "bounds": bounds,
-                    "resource_id": resource_id
+                    "resource_id": resource_id,
+                    "match_type": "exact"  # 标记为精确匹配
                 }
 
-            # 优先级 2: 包含匹配 text 属性
-            if text and target_lower in text.strip().lower():
-                bounds = parse_bounds(node.get('bounds', ''))
-                return {
-                    "text": text,
-                    "class": node.get('class', ''),
-                    "bounds": bounds,
-                    "resource_id": resource_id
-                }
-
-            # 优先级 3: 匹配 content-description
-            if content_description and target_lower in content_description.strip().lower():
+            # 优先级 2: 精确匹配 content-description
+            if content_description and content_description.strip().lower() == target_lower:
                 bounds = parse_bounds(node.get('bounds', ''))
                 return {
                     "text": content_description,
                     "class": node.get('class', ''),
                     "bounds": bounds,
-                    "resource_id": resource_id
+                    "resource_id": resource_id,
+                    "match_type": "exact"
                 }
-
-            # 优先级 4: 匹配 resource-id（简化版，取最后一个部分）
-            if resource_id:
-                id_parts = resource_id.split('/')
-                if len(id_parts) > 1:
-                    id_name = id_parts[-1].lower()
-                    if target_lower in id_name or id_name in target_lower:
-                        bounds = parse_bounds(node.get('bounds', ''))
-                        return {
-                            "text": text or resource_id,
-                            "class": node.get('class', ''),
-                            "bounds": bounds,
-                            "resource_id": resource_id
-                        }
 
             # 递归搜索子节点
             for child in node:
@@ -2644,7 +2616,67 @@ class TaskSchedulerVT:
 
             return None
 
-        return search_node(root)
+        def search_node_fallback(node):
+            """回退搜索：允许包含匹配"""
+            # 获取节点的文本属性
+            text = node.get('text', '')
+            content_description = node.get('content-desc', '')
+            resource_id = node.get('resource-id', '')
+
+            # 检查各种文本属性
+            target_lower = target_text.strip().lower()
+
+            # 优先级 1: 包含匹配 text 属性
+            if text and target_lower in text.strip().lower():
+                bounds = parse_bounds(node.get('bounds', ''))
+                return {
+                    "text": text,
+                    "class": node.get('class', ''),
+                    "bounds": bounds,
+                    "resource_id": resource_id,
+                    "match_type": "contains"  # 标记为包含匹配
+                }
+
+            # 优先级 2: 包含匹配 content-description
+            if content_description and target_lower in content_description.strip().lower():
+                bounds = parse_bounds(node.get('bounds', ''))
+                return {
+                    "text": content_description,
+                    "class": node.get('class', ''),
+                    "bounds": bounds,
+                    "resource_id": resource_id,
+                    "match_type": "contains"
+                }
+
+            # 优先级 3: 匹配 resource-id
+            if resource_id:
+                id_name = resource_id.lower()
+                if target_lower in id_name or id_name in target_lower:
+                    bounds = parse_bounds(node.get('bounds', ''))
+                    return {
+                        "text": text or resource_id,
+                        "class": node.get('class', ''),
+                        "bounds": bounds,
+                        "resource_id": resource_id,
+                        "match_type": "resource_id"
+                    }
+
+            # 递归搜索子节点
+            for child in node:
+                result = search_node_fallback(child)
+                if result:
+                    return result
+
+            return None
+
+        # 先尝试精确匹配（包含匹配会跳过）
+        result = search_node(simplified_root)
+
+        # 如果精确匹配失败，再尝试包含匹配
+        if not result:
+            result = search_node_fallback(simplified_root)
+
+        return result
 
     def _step_execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Execute action step."""

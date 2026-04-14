@@ -94,32 +94,47 @@ class RAGTemplateMatcher:
             self.templates = {}
 
     def _load_templates(self, templates_dir: Path):
-        """加载模板文件"""
-        for template_file in templates_dir.glob("*.json"):
-            try:
-                with open(template_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+        """加载模板文件（只加载 all_templates.json）"""
+        # 只加载 all_templates.json 文件
+        all_templates_file = templates_dir / "all_templates.json"
 
-                # 支持两种格式
-                if isinstance(data, list):
-                    templates = data
-                elif isinstance(data, dict) and 'templates' in data:
-                    templates = data['templates']
-                else:
-                    continue
+        if not all_templates_file.exists():
+            logger.warning(f"   ⚠️  all_templates.json 不存在，尝试加载其他模板文件")
+            # 如果 all_templates.json 不存在，则加载所有 JSON 文件（回退行为）
+            for template_file in templates_dir.glob("*.json"):
+                self._load_single_template_file(template_file)
+            return
 
-                # 按应用分组
-                for template in templates:
-                    app = template.get('app', 'Unknown')
-                    if app not in self.templates:
-                        self.templates[app] = []
+        # 只加载 all_templates.json
+        self._load_single_template_file(all_templates_file)
 
-                    self.templates[app].append(template)
+    def _load_single_template_file(self, template_file: Path):
+        """加载单个模板文件"""
+        try:
+            with open(template_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
 
-                logger.info(f"   📄 加载模板: {template_file.name} ({len(templates)} 个)")
+            # 支持两种格式
+            if isinstance(data, list):
+                templates = data
+            elif isinstance(data, dict) and 'templates' in data:
+                templates = data['templates']
+            else:
+                logger.warning(f"   ⚠️  跳过不支持的格式: {template_file.name}")
+                return
 
-            except Exception as e:
-                logger.error(f"   ❌ 加载模板失败 {template_file}: {e}")
+            # 按应用分组
+            for template in templates:
+                app = template.get('app', 'Unknown')
+                if app not in self.templates:
+                    self.templates[app] = []
+
+                self.templates[app].append(template)
+
+            logger.info(f"   📄 加载模板: {template_file.name} ({len(templates)} 个)")
+
+        except Exception as e:
+            logger.error(f"   ❌ 加载模板失败 {template_file}: {e}")
 
         # 预计算所有模板的向量
         self._precompute_embeddings()
