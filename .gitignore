@@ -29,12 +29,15 @@ data/
 *.log
 *.xml
 
-# ========== 取证数据文件 ==========
+# ========== 取证运行时数据 ==========
 forensiflow_*.json
+forensiflow_screenshots/
+forensiflow_xml_dumps/
+xml_dumps/
 whatsapp_*.json
 wechat_*.json
 
-# ========== 模型文件（太大，不提交到 Git） ==========
+# ========== 模型文件（太大，不提交） ==========
 external/VisionTasker/pt_model/
 *.pt
 *.pth
@@ -59,15 +62,48 @@ old/
 .DS_Store
 Thumbs.db
 
+# ========== Claude Code 记忆 ==========
+memory/
+.claude/
 
-# ========== 测试脚本（临时文件） ==========
+# ========== 根目录无用脚本（调试/临时/旧版） ==========
+README2.md
+debug_*.py
+fix_*.py
+quick_test_*.py
+verify_*.py
+setting.py
+run_project.py
+run_all_tasks.py
+api_services_qwen.py
+lastvision.py
+template_manager.py
+xml_dumper.py
+xml_simple.py
+goals.txt
+case.txt
+README2.md
+
+# ========== 旧版测试脚本 ==========
+test_old_scheduler_app_name.py
+test_old_scheduler_original.py
+test_scheduler_selector.py
+test_template_rag_integration.py
+test_xml_matching_priority.py
+test_xml_simplification.py
+test_bge_load.py
+test_semantic_matcher.py
+
+# ========== 旧版脚本 ==========
 qwen*.py
 message*.py
 browse_contacts.py
 qwentest.py
 qwenapitest.py
+whatsapp_Communicate.py
+whatsapp_informaition.py
 
-# ========== 过程性报告文档（开发记录，不提交） ==========
+# ========== 过程性报告文档（开发记录） ==========
 CODE_REFACTORING_REPORT.md
 API_KEY_MIGRATION_GUIDE.md
 API_KEY_UNIFICATION_REPORT.md
@@ -77,9 +113,3 @@ DIRECTORY_RENAMING_SUMMARY.md
 # ========== 其他 ==========
 .git/
 claude_code_env.sh
-old/
-
-test_bge_load.py
-test_semantic_matcher.py
-whatsapp_Communicate.py
-whatsapp_informaition.py

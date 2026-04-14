@@ -278,8 +278,8 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="qwen3.5-plus",
-        help="使用的模型名称（默认: qwen-plus）"
+        default="qwen3.5-27b",
+        help="使用的模型名称（默认: qwen3.5-27b）"
     )
     parser.add_argument(
         "--temperature",

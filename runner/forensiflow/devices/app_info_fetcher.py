@@ -79,14 +79,21 @@ class AppInfoFetcher:
 
     def _is_cache_expired(self, cache_entry: Dict) -> bool:
         """检查缓存是否过期"""
-        if 'timestamp' not in cache_entry:
-            return True
+        status = cache_entry.get('status', 'success')
 
-        timestamp_str = cache_entry['timestamp']
-        timestamp = datetime.fromisoformat(timestamp_str)
-        expiry_time = timestamp + timedelta(hours=self.cache_expiry_hours)
+        # 成功的查询：永不过期（包名→应用名映射不会变）
+        if status == 'success':
+            return False
 
-        return datetime.now() > expiry_time
+        # 失败的查询：永不过期（避免反复重试已知失败的应用）
+        if status == 'failed':
+            return False
+
+        # 旧格式缓存（没有status字段）：永不过期
+        if 'data' in cache_entry:
+            return False
+
+        return True
 
     def _extract_app_info(self, details: Dict) -> Dict[str, Any]:
         """
@@ -119,6 +126,10 @@ class AppInfoFetcher:
         if not force_refresh and package_name in self.cache:
             cache_entry = self.cache[package_name]
             if not self._is_cache_expired(cache_entry):
+                status = cache_entry.get('status', 'success')
+                if status == 'failed':
+                    self.logger.info(f"⏭️  跳过已知失败: {package_name} ({cache_entry.get('reason', '')})")
+                    return None
                 self.logger.info(f"✅ 从缓存读取: {package_name}")
                 return cache_entry['data']
 
@@ -134,6 +145,13 @@ class AppInfoFetcher:
 
             if not details:
                 self.logger.warning(f"⚠️ 应用未找到: {package_name}")
+                # 缓存失败记录
+                self.cache[package_name] = {
+                    'status': 'failed',
+                    'reason': '应用未找到',
+                    'timestamp': datetime.now().isoformat()
+                }
+                self._save_cache()
                 return None
 
             # 提取关键信息
@@ -141,6 +159,7 @@ class AppInfoFetcher:
 
             # 更新缓存
             self.cache[package_name] = {
+                'status': 'success',
                 'data': app_info,
                 'timestamp': datetime.now().isoformat()
             }
@@ -151,6 +170,13 @@ class AppInfoFetcher:
 
         except Exception as e:
             self.logger.error(f"❌ 查询失败 {package_name}: {e}")
+            # 缓存失败记录
+            self.cache[package_name] = {
+                'status': 'failed',
+                'reason': str(e)[:200],
+                'timestamp': datetime.now().isoformat()
+            }
+            self._save_cache()
             return None
 
     def fetch_multiple_apps(self, package_names: List[str], delay: float = 1.0) -> Dict[str, Dict]:
@@ -163,29 +189,45 @@ class AppInfoFetcher:
                     只在未命中缓存需要调用API时才延迟
 
         Returns:
-            包名到应用信息的映射字典
+            包名到应用信息的映射字典（仅包含成功查询的应用）
         """
         results = {}
+        cached_count = 0
+        failed_count = 0
+        new_count = 0
 
         for i, package_name in enumerate(package_names, 1):
-            self.logger.info(f"📦 进度: {i}/{len(package_names)}")
+            # 检查缓存是否命中（包含成功和失败）
+            if package_name in self.cache:
+                cache_entry = self.cache[package_name]
+                if not self._is_cache_expired(cache_entry):
+                    status = cache_entry.get('status', 'success')
+                    if status == 'success' and 'data' in cache_entry:
+                        results[package_name] = cache_entry['data']
+                        cached_count += 1
+                        continue
+                    elif status == 'failed':
+                        failed_count += 1
+                        continue
 
-            # 检查缓存是否命中
-            cache_hit = package_name in self.cache and not self._is_cache_expired(self.cache[package_name])
-
-            if cache_hit:
-                self.logger.info(f"  ✅ 从缓存读取: {package_name}")
-            else:
-                self.logger.info(f"  🔍 正在查询: {package_name}")
+            # 需要查询
+            new_count += 1
+            self.logger.info(f"📦 进度: {i}/{len(package_names)} [新查询] {package_name}")
 
             app_info = self.fetch_app_info(package_name)
             if app_info:
                 results[package_name] = app_info
 
-            # 只在未命中缓存时延迟
-            if not cache_hit and i < len(package_names):
+            # 延迟（避免被封）
+            if i < len(package_names):
                 time.sleep(delay)
 
+        # 汇总已有缓存中的成功记录
+        for pkg, entry in self.cache.items():
+            if pkg not in results and entry.get('status', 'success') == 'success' and 'data' in entry:
+                results[pkg] = entry['data']
+
+        self.logger.info(f"📊 查询汇总: 缓存命中 {cached_count}, 已知失败 {failed_count}, 新查询 {new_count}")
         return results
 
     def search_by_keyword(self, keyword: str, num_results: int = 10) -> List[Dict]:
@@ -227,18 +269,29 @@ class AppInfoFetcher:
         output_path = Path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        success_count = sum(1 for e in self.cache.values() if e.get('status', 'success') == 'success')
+        failed_count = sum(1 for e in self.cache.values() if e.get('status') == 'failed')
+
         lines = []
         lines.append("=" * 80)
         lines.append("应用信息列表")
         lines.append(f"导出时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"总计: {len(self.cache)} 个应用")
+        lines.append(f"总计: {len(self.cache)} 个应用 (成功: {success_count}, 失败: {failed_count})")
         lines.append("=" * 80)
         lines.append("")
 
         for package_name, cache_entry in sorted(self.cache.items()):
-            app_info = cache_entry['data']
+            status = cache_entry.get('status', 'success')
+            if status == 'failed':
+                lines.append(f"📦 包名: {package_name}")
+                lines.append(f"❌ 查询失败: {cache_entry.get('reason', '未知')}")
+                lines.append("-" * 80)
+                lines.append("")
+                continue
 
-            lines.append(f"📦 包名: {app_info.get('packageName', 'N/A')}")
+            app_info = cache_entry.get('data', {})
+
+            lines.append(f"📦 包名: {app_info.get('packageName', package_name)}")
             lines.append(f"📱 名称: {app_info.get('title', 'N/A')}")
             lines.append(f"📂 分类: {app_info.get('category', 'N/A')}")
             lines.append("-" * 80)
@@ -261,11 +314,20 @@ class AppInfoFetcher:
         output_path = Path(output_file)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 只导出应用数据，不包含时间戳
-        export_data = {
-            pkg: entry['data']
-            for pkg, entry in self.cache.items()
-        }
+        # 导出所有记录（成功和失败都包含）
+        export_data = {}
+        for pkg, entry in self.cache.items():
+            status = entry.get('status', 'success')
+            if status == 'success' and 'data' in entry:
+                export_data[pkg] = entry['data']
+            elif status == 'failed':
+                export_data[pkg] = {
+                    'packageName': pkg,
+                    'title': 'Unknown',
+                    'category': 'Unknown',
+                    'query_failed': True,
+                    'reason': entry.get('reason', '')
+                }
 
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(export_data, f, ensure_ascii=False, indent=2)
@@ -275,15 +337,25 @@ class AppInfoFetcher:
     def get_summary(self) -> Dict:
         """获取缓存统计信息"""
         total = len(self.cache)
+        success_count = 0
+        failed_count = 0
         categories = {}
 
         for cache_entry in self.cache.values():
-            app_info = cache_entry['data']
-            category = app_info.get('category', 'Unknown')
-            categories[category] = categories.get(category, 0) + 1
+            status = cache_entry.get('status', 'success')
+            if status == 'failed':
+                failed_count += 1
+                continue
+            success_count += 1
+            if 'data' in cache_entry:
+                app_info = cache_entry['data']
+                category = app_info.get('category', 'Unknown')
+                categories[category] = categories.get(category, 0) + 1
 
         return {
             'total_apps': total,
+            'success_count': success_count,
+            'failed_count': failed_count,
             'categories': categories
         }
 

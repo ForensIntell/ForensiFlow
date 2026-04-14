@@ -365,6 +365,8 @@ class WhatsAppUniversalExtractor:
 
         logging.info(f"\n{'='*60}\n🎉 全量底层数据固化完成: {os.path.abspath(self.output_file)}\n{'='*60}")
 
+        return True  # ✅ 返回 True 表示脚本执行成功
+
 
 def main():
     """命令行入口函数"""

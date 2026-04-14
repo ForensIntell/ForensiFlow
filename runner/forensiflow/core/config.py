@@ -92,7 +92,7 @@ class Config:
     @property
     def qwen_default_model(self) -> str:
         """Qwen 默认模型"""
-        return os.getenv("QWEN_DEFAULT_MODEL", "qwen-plus")
+        return os.getenv("QWEN_DEFAULT_MODEL", "qwen3.5-27b")
 
     @property
     def chatglm_default_model(self) -> str:
