@@ -21,6 +21,74 @@ from sentence_transformers import SentenceTransformer
 logger = logging.getLogger(__name__)
 
 
+def _template_package_name(template: Dict[str, Any]) -> str:
+    if template.get("package_name"):
+        return str(template.get("package_name") or "")
+    steps = template.get("steps")
+    if isinstance(steps, list) and steps and isinstance(steps[0], dict):
+        return str(steps[0].get("package_name") or "")
+    return ""
+
+
+def _template_script_name(template: Dict[str, Any]) -> str:
+    script_generation = template.get("script_generation") if isinstance(template.get("script_generation"), dict) else {}
+    if script_generation.get("script_name"):
+        return str(script_generation.get("script_name") or "")
+    steps = template.get("steps")
+    if isinstance(steps, list):
+        for step in steps:
+            if isinstance(step, dict) and str(step.get("action") or "").lower() == "callscript":
+                return str(step.get("target") or "")
+    return ""
+
+
+_PACKAGE_APP_NAMES = {
+    "com.android.chrome": "Chrome",
+    "com.google.android.gm": "Gmail",
+    "com.google.android.apps.maps": "Google Maps",
+    "com.whatsapp": "WhatsApp",
+}
+
+
+def _canonical_app_name_for_package(package_name: str) -> str:
+    return _PACKAGE_APP_NAMES.get(str(package_name or "").strip(), "")
+
+
+def _is_reusable_extraction_template(template: Dict[str, Any]) -> bool:
+    if template.get("template_type") == "navigation_only":
+        return False
+    if template.get("script_generation_success") is False:
+        return False
+    steps = template.get("steps")
+    if not isinstance(steps, list) or not steps:
+        return False
+    first = steps[0] if isinstance(steps[0], dict) else {}
+    if str(first.get("action") or "").lower() != "launch":
+        return False
+    return bool(_template_package_name(template) and _template_script_name(template))
+
+
+def _normalize_app_name(value: str) -> str:
+    normalized = str(value or "").strip().casefold()
+    for token in (" messenger", " app", " application"):
+        normalized = normalized.replace(token, "")
+    return normalized.strip()
+
+
+def _task_mentions_app(task: str, app: str) -> bool:
+    task_norm = str(task or "").casefold()
+    app_norm = _normalize_app_name(app)
+    aliases = {
+        "chrome": ["chrome", "浏览器", "历史记录", "下载记录", "书签"],
+        "gmail": ["gmail", "邮件", "收件箱", "发件箱", "inbox", "sent"],
+        "google maps": ["google maps", "maps", "地图", "地点", "路线", "saved"],
+    }
+    for alias in aliases.get(app_norm, [app_norm]):
+        if alias and alias in task_norm:
+            return True
+    return False
+
+
 @dataclass
 class TemplateMatch:
     """模板匹配结果"""
@@ -125,6 +193,15 @@ class RAGTemplateMatcher:
 
             # 按应用分组
             for template in templates:
+                if not _is_reusable_extraction_template(template):
+                    logger.info(f"   ⏭️  跳过非可复用提取模板: {template.get('task', '')}")
+                    continue
+                template = dict(template)
+                package_name = _template_package_name(template)
+                canonical_app = _canonical_app_name_for_package(package_name)
+                if canonical_app and _normalize_app_name(template.get("app", "")) != _normalize_app_name(canonical_app):
+                    template["original_app"] = template.get("app", "")
+                    template["app"] = canonical_app
                 app = template.get('app', 'Unknown')
                 if app not in self.templates:
                     self.templates[app] = []
@@ -147,7 +224,7 @@ class RAGTemplateMatcher:
 
             # 提取任务描述
             task_descriptions = [t.get('task', '') for t in templates]
-            embeddings = self.model.encode(task_descriptions, convert_to_numpy=True)
+            embeddings = self.model.encode(task_descriptions, convert_to_numpy=True, show_progress_bar=False)
 
             # 标准化
             embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
@@ -163,6 +240,7 @@ class RAGTemplateMatcher:
         self,
         app: str,
         task: str,
+        package_name: str = "",
         top_k: Optional[int] = None
     ) -> List[TemplateMatch]:
         """
@@ -179,35 +257,59 @@ class RAGTemplateMatcher:
         if top_k is None:
             top_k = self.top_k
 
-        # 检查应用是否有模板
-        if app not in self.template_embeddings:
-            logger.warning(f"⚠️  应用 [{app}] 没有模板")
-            return []
+        requested_package = str(package_name or "").strip()
+        # 检查应用是否有模板；兼容 WhatsApp / WhatsApp Messenger 这类命名差异。
+        app_keys = [app] if app in self.template_embeddings else []
+        if not app_keys:
+            requested = _normalize_app_name(app)
+            app_keys = [key for key in self.template_embeddings if _normalize_app_name(key) == requested]
+        if not app_keys and requested_package:
+            package_app = _canonical_app_name_for_package(requested_package)
+            if package_app:
+                app_keys = [key for key in self.template_embeddings if _normalize_app_name(key) == _normalize_app_name(package_app)]
+            if not app_keys:
+                app_keys = [
+                    key
+                    for key, template_data in self.template_embeddings.items()
+                    if any(_template_package_name(template) == requested_package for template in template_data["templates"])
+                ]
+            if app_keys:
+                logger.warning(f"⚠️  应用 [{app}] 无直接模板，按 package [{requested_package}] 使用候选: {app_keys}")
+        if not app_keys:
+            logger.warning(f"⚠️  应用 [{app}] 没有模板，启用全库兜底检索")
+            app_keys = list(self.template_embeddings.keys())
 
         # 编码查询
-        query_emb = self.model.encode(task, convert_to_numpy=True)
+        query_emb = self.model.encode(task, convert_to_numpy=True, show_progress_bar=False)
         query_emb = query_emb / np.linalg.norm(query_emb)
 
         # 计算相似度
-        template_data = self.template_embeddings[app]
-        embeddings = template_data['embeddings']
-        templates = template_data['templates']
+        scored: List[Tuple[float, Dict[str, Any]]] = []
+        for app_key in app_keys:
+            template_data = self.template_embeddings[app_key]
+            embeddings = template_data['embeddings']
+            templates = template_data['templates']
+            scores = np.dot(embeddings, query_emb)
+            for score, template in zip(scores, templates):
+                package_name = _template_package_name(template)
+                if requested_package and package_name and package_name != requested_package:
+                    continue
+                if package_name and app_keys != [app] and not _task_mentions_app(task, template.get("app", "")):
+                    requested_app = _normalize_app_name(app)
+                    template_app = _normalize_app_name(template.get("app", ""))
+                    if requested_app and template_app and requested_app != template_app:
+                        score = float(score) * 0.9
+                scored.append((float(score), template))
 
-        scores = np.dot(embeddings, query_emb)
+        scored.sort(key=lambda item: item[0], reverse=True)
+        results = [
+            TemplateMatch(template=template, score=score, rank=rank + 1)
+            for rank, (score, template) in enumerate(scored[:top_k])
+        ]
 
-        # Top-K
-        top_indices = np.argsort(scores)[::-1][:top_k]
-
-        results = []
-        for rank, idx in enumerate(top_indices):
-            results.append(TemplateMatch(
-                template=templates[idx],
-                score=float(scores[idx]),
-                rank=rank + 1
-            ))
-
-        logger.info(f"🔍 RAG 检索: 应用=[{app}], 任务=[{task}]")
-        logger.info(f"   最佳匹配: rank=1, score={results[0].score:.3f}")
+        logger.info(f"🔍 RAG 检索: 应用=[{app}], package=[{requested_package}], 任务=[{task}]")
+        if results:
+            logger.info(f"   最佳匹配: rank=1, score={results[0].score:.3f}")
 
         return results
 

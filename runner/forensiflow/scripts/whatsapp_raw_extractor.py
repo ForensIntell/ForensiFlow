@@ -18,6 +18,7 @@ import time
 import json
 import logging
 import re
+import hashlib
 import xml.etree.ElementTree as ET
 
 # 添加项目根目录到 Python 路径
@@ -53,11 +54,25 @@ class WhatsAppUniversalExtractor:
         self.visited_contacts = set()
         self.max_contacts = 1000
         self.output_file = "forensiflow_universal_raw_data.json"
+        self._output_data = []
+        self.chat_scroll_wait = float(os.getenv("MOBIAGENT_CHAT_SCROLL_WAIT", "0.55"))
+        self.chat_swipe_duration = float(os.getenv("MOBIAGENT_CHAT_SWIPE_DURATION", "0.25"))
+        self.page_open_wait = float(os.getenv("MOBIAGENT_PAGE_OPEN_WAIT", "1.0"))
+        self.back_wait = float(os.getenv("MOBIAGENT_BACK_WAIT", "0.7"))
+        self.list_scroll_wait = float(os.getenv("MOBIAGENT_LIST_SCROLL_WAIT", "0.8"))
+        self.list_swipe_duration = float(os.getenv("MOBIAGENT_LIST_SWIPE_DURATION", "0.35"))
 
         # 初始化输出文件
         with open(self.output_file, 'w', encoding='utf-8') as f:
             json.dump([], f, ensure_ascii=False, indent=4)
-        logging.info(f"📁 已初始化全量底层取证数据文件: {os.path.abspath(self.output_file)}")
+        logging.info(f"📁 已初始化取证结果文件: {os.path.abspath(self.output_file)}")
+
+    def _flush_output_data(self):
+        """将内存中的提取结果原子写回 JSON 文件，避免反复读写整文件。"""
+        tmp_file = f"{self.output_file}.tmp"
+        with open(tmp_file, 'w', encoding='utf-8') as f:
+            json.dump(self._output_data, f, ensure_ascii=False, indent=4)
+        os.replace(tmp_file, self.output_file)
 
     def append_contact_to_json(self, contact_data: dict):
         """
@@ -67,15 +82,9 @@ class WhatsAppUniversalExtractor:
             contact_data: 联系人数据字典
         """
         try:
-            with open(self.output_file, 'r', encoding='utf-8') as f:
-                current_data = json.load(f)
-
-            current_data.append(contact_data)
-
-            with open(self.output_file, 'w', encoding='utf-8') as f:
-                json.dump(current_data, f, ensure_ascii=False, indent=4)
-
-            logging.info(f"   💾 [{contact_data['contact_name']}] 的底层数据已安全落盘。")
+            self._output_data.append(contact_data)
+            self._flush_output_data()
+            logging.info(f"   💾 [{contact_data['contact_name']}] 的数据已保存。")
         except Exception as e:
             logging.error(f"   ❌ 保存 [{contact_data['contact_name']}] 数据时失败: {e}")
 
@@ -93,6 +102,16 @@ class WhatsAppUniversalExtractor:
         if match:
             return [int(match.group(1)), int(match.group(2)), int(match.group(3)), int(match.group(4))]
         return [0, 0, 0, 0]
+
+    def _message_identifier(self, parsed_msg: dict) -> str:
+        """为消息节点生成稳定短标识，降低去重集合的内存占用。"""
+        canonical = json.dumps(
+            parsed_msg,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(',', ':')
+        )
+        return hashlib.sha1(canonical.encode('utf-8')).hexdigest()
 
     def parse_universal_raw_node(self, row_node, contact_name: str) -> dict:
         """
@@ -163,17 +182,15 @@ class WhatsAppUniversalExtractor:
         """
         提取完整聊天记录（通过滑动遍历）
         """
-        chat_history = []
+        chat_pages = []
         seen_identifiers = set()
 
-        no_new_msg_streak = 0
-        MAX_MSG_STREAK = 3
+        last_xml_hash = ""
 
-        logging.info(f"   📥 开始拉取 [{contact_name}] 的全量底层结构数据...")
+        logging.info(f"   📥 开始提取聊天记录 [{contact_name}] ...")
 
         while True:
             current_view_msgs = []
-            new_msgs_found = False
 
             page_xml = self.d.dump_hierarchy()
             try:
@@ -181,6 +198,12 @@ class WhatsAppUniversalExtractor:
             except Exception as e:
                 logging.error(f"   ⚠️ XML解析失败: {e}")
                 continue
+
+            current_xml_hash = hashlib.sha1(page_xml.encode('utf-8')).hexdigest()
+            if current_xml_hash == last_xml_hash:
+                logging.info(f"   ✅ [{contact_name}] 已到达历史记录顶部。")
+                break
+            last_xml_hash = current_xml_hash
 
             safe_top = 150
             safe_bottom = 2000
@@ -211,25 +234,21 @@ class WhatsAppUniversalExtractor:
                 parsed_msg = self.parse_universal_raw_node(item['node'], contact_name)
 
                 if parsed_msg:
-                    identifier = json.dumps(parsed_msg, sort_keys=True)
+                    identifier = self._message_identifier(parsed_msg)
 
                     if identifier not in seen_identifiers:
                         seen_identifiers.add(identifier)
-                        new_msgs_found = True
                         current_view_msgs.append(parsed_msg)
 
-            if not new_msgs_found:
-                no_new_msg_streak += 1
-                if no_new_msg_streak >= MAX_MSG_STREAK:
-                    logging.info(f"   ✅ [{contact_name}] 的底层数据已全部拉取完毕。")
-                    break
-            else:
-                no_new_msg_streak = 0
-                chat_history = current_view_msgs + chat_history
+            if current_view_msgs:
+                chat_pages.append(current_view_msgs)
 
-            self.d.swipe(0.5, 0.25, 0.5, 0.8, duration=0.4)
-            time.sleep(1.5)
+            self.d.swipe(0.5, 0.25, 0.5, 0.8, duration=self.chat_swipe_duration)
+            time.sleep(self.chat_scroll_wait)
 
+        chat_history = []
+        for page_msgs in reversed(chat_pages):
+            chat_history.extend(page_msgs)
         return chat_history
 
     def browse_and_extract(self):
@@ -237,7 +256,7 @@ class WhatsAppUniversalExtractor:
         浏览联系人列表并提取所有聊天记录
         主流程函数，自动遍历联系人、普通群组，并穿透提取社群(Community)内的子群组数据
         """
-        logging.info(f"\n{'='*60}\n🚀 全量底层吸尘器引擎启动 (支持社群穿透)\n{'='*60}")
+        logging.info(f"\n{'='*60}\n🚀 WhatsApp 聊天记录提取开始\n{'='*60}")
 
         visited_count = 0
         contact_name_id = "com.whatsapp:id/conversations_row_contact_name"
@@ -275,19 +294,19 @@ class WhatsAppUniversalExtractor:
                     if text in self.visited_contacts:
                         continue
 
-                    logging.info(f"👉 锁定目标 #{visited_count + 1}: {text}")
+                    logging.info(f"👉 处理会话 #{visited_count + 1}: {text}")
 
                     try:
                         elem.click(timeout=3)
                         self.visited_contacts.add(text)
                         visited_count += 1
-                        time.sleep(2.0)
+                        time.sleep(self.page_open_wait)
 
                         # ==========================================
                         # 💡 核心修复：社群 (Community) 穿透检测逻辑
                         # ==========================================
                         if self.d(resourceId="com.whatsapp:id/community_navigation_subgroup_recycler_view").exists:
-                            logging.info(f"   🏘️ 发现社群导航页: [{text}]，启动子群穿透模式...")
+                            logging.info(f"   🏘️ 发现社群会话: [{text}]，开始提取子群聊天记录...")
                             community_name = text
                             subgroup_visited = set()
                             no_new_subgroups = 0
@@ -303,17 +322,17 @@ class WhatsAppUniversalExtractor:
                                 if not subgroup_elems:
                                     no_new_subgroups += 1
                                     if no_new_subgroups >= 2:
-                                        logging.info(f"   ✅ 社群 [{community_name}] 内的所有子群已遍历完毕。")
+                                        logging.info(f"   ✅ 社群 [{community_name}] 子群提取完成。")
                                         break
                                 else:
                                     no_new_subgroups = 0
 
                                 for sub_text, sub_elem in subgroup_elems:
                                     if sub_text in subgroup_visited: continue
-                                    logging.info(f"      ↳ 进入社群子群组: [{sub_text}]")
+                                    logging.info(f"      ↳ 处理社群子群: [{sub_text}]")
                                     
                                     sub_elem.click(timeout=3)
-                                    time.sleep(2.0)
+                                    time.sleep(self.page_open_wait)
 
                                     # 在子群组内拉取聊天记录
                                     full_name = f"【社群】{community_name} -> {sub_text}"
@@ -328,15 +347,15 @@ class WhatsAppUniversalExtractor:
 
                                     self.d.press("back") # 退回到社群导航页
                                     subgroup_visited.add(sub_text)
-                                    time.sleep(1.5)
+                                    time.sleep(self.back_wait)
 
                                 # 在社群导航页内向下滑动，寻找更多子群
-                                self.d.swipe(0.5, 0.8, 0.5, 0.2, duration=0.5)
-                                time.sleep(1.5)
+                                self.d.swipe(0.5, 0.8, 0.5, 0.2, duration=self.list_swipe_duration)
+                                time.sleep(self.list_scroll_wait)
 
                             # 社群遍历结束，退回到主聊天列表
                             self.d.press("back")
-                            time.sleep(1.5)
+                            time.sleep(self.back_wait)
 
                         # ==========================================
                         # 正常逻辑：普通联系人或普通群组
@@ -351,26 +370,31 @@ class WhatsAppUniversalExtractor:
                             self.append_contact_to_json(contact_data)
 
                             self.d.press("back") # 退回到主聊天列表
-                            time.sleep(1.5)
+                            time.sleep(self.back_wait)
 
                     except Exception as e:
                         logging.error(f"   ✗ 处理 [{text}] 时发生异常: {e}")
                         self.d.press("back")
-                        time.sleep(1)
+                        time.sleep(self.back_wait)
 
             if visited_count < self.max_contacts and no_new_contacts_streak < MAX_CONTACT_STREAK:
-                logging.info("⬇️ 主列表向下滑动获取新目标...")
-                self.d.swipe(0.5, 0.8, 0.5, 0.2, duration=0.5)
-                time.sleep(1.5)
+                logging.info("⬇️ 继续扫描会话列表...")
+                self.d.swipe(0.5, 0.8, 0.5, 0.2, duration=self.list_swipe_duration)
+                time.sleep(self.list_scroll_wait)
 
-        logging.info(f"\n{'='*60}\n🎉 全量底层数据固化完成: {os.path.abspath(self.output_file)}\n{'='*60}")
+        logging.info(f"\n{'='*60}\n🎉 提取结果已保存: {os.path.abspath(self.output_file)}\n{'='*60}")
 
         return True  # ✅ 返回 True 表示脚本执行成功
 
 
 def main():
     """命令行入口函数"""
-    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    try:
+        from core.logging_utils import configure_logging
+        configure_logging()
+    except Exception:
+        logging.basicConfig(level=logging.INFO, format='%(message)s')
+
     device_serial = ""  # 留空使用默认设备
     extractor = WhatsAppUniversalExtractor(device_serial)
     extractor.browse_and_extract()

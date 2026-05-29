@@ -1,4 +1,4 @@
-# 🎯 MobiAgent 端到端执行指南
+# 🎯 ForensiFlow 端到端执行指南
 
 ## 核心逻辑：规划层为入口
 
@@ -11,6 +11,7 @@
       ↓
 执行层（run_forensic_plan.py）
   ├─ 输入：forensic_plan_XXX.json
+  ├─ Route Selector：选择经验复用路径或探索生成路径
   └─ 输出：执行结果
 ```
 
@@ -98,7 +99,7 @@ python run_end_to_end.py \
 | `--task-index` | 可选 | 只执行特定任务 | `0` |
 | `--plan` | 可选 | 使用已有规划文件（跳过规划） | `plan.json` |
 | `--device-serial` | 可选 | 设备序列号 | `emulator-5554` |
-| `--model` | 可选 | LLM 模型 | `qwen3.5-27b` |
+| `--model` | 可选 | LLM 模型 | `your-model-name` |
 | `--threshold` | 可选 | 调度器选择阈值 | `0.75` |
 
 **注意：** 如果既没有 `--case/--case-file` 也没有 `--plan`，则进入交互模式。
@@ -148,9 +149,11 @@ python run_end_to_end.py --case "..." --goals "..."
 
 ## 📚 相关文档
 
-- [规划层使用指南](FORENSIC_PLANNER_README.md)
+- [当前架构与模块命名](CURRENT_ARCHITECTURE.md)
+- [模块级测试入口](MODULE_TESTING.md)
 - [执行层使用指南](USER_GUIDE_V2.md)
-- [调度器集成架构](SCHEDULER_INTEGRATION_PLAN.md)
+- [Codex ForensiFlow Agent](CODEX_FORENSIFLOW_AGENT.md)
+- [项目清洁与维护说明](PROJECT_CLEANUP_NOTES.md)
 
 ---
 

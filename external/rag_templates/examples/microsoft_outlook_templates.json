@@ -1,0 +1,23 @@
+[
+  {
+    "app": "Microsoft Outlook",
+    "package_name": "",
+    "task": "消息/会话总列表界面全量提取",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.microsoft.office.outlook",
+        "app_name": "Microsoft Outlook"
+      },
+      {
+        "action": "Wait"
+      }
+    ]
+  }
+]

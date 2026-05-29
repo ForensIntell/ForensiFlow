@@ -6,6 +6,7 @@ Handles Android device interactions.
 
 import base64
 import logging
+import subprocess
 import time
 import uiautomator2 as u2
 
@@ -20,10 +21,8 @@ class AndroidDevice:
         Args:
             adb_endpoint: ADB endpoint (optional, uses default if not specified)
         """
-        if adb_endpoint:
-            self.d = u2.connect(adb_endpoint)
-        else:
-            self.d = u2.connect()
+        self.adb_endpoint = adb_endpoint
+        self.d = self._connect_with_retry(adb_endpoint)
         self.app_package_names = {
             "携程": "ctrip.android.view",
             "同城": "com.tongcheng.android",
@@ -55,21 +54,108 @@ class AndroidDevice:
             "telegram": "org.telegram.messenger",
         }
 
+    def _connect_with_retry(self, adb_endpoint=None, retries: int = 3):
+        last_exc = None
+        for attempt in range(1, max(1, retries) + 1):
+            try:
+                device = u2.connect(adb_endpoint) if adb_endpoint else u2.connect()
+                _ = device.serial
+                return device
+            except Exception as exc:
+                last_exc = exc
+                logging.warning(
+                    "uiautomator2 connect failed on attempt %s/%s for %s: %s",
+                    attempt,
+                    retries,
+                    adb_endpoint or "default-device",
+                    exc,
+                )
+                self._reset_uiautomator(adb_endpoint)
+                time.sleep(1.5 * attempt)
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("failed to connect Android device")
+
+    def _reset_uiautomator(self, adb_endpoint=None) -> None:
+        if not adb_endpoint:
+            return
+        for package_name in ("com.github.uiautomator", "com.github.uiautomator.test", "com.github.uiautomator2", "com.github.uiautomator2.test"):
+            try:
+                subprocess.run(
+                    ["adb", "-s", adb_endpoint, "shell", "am", "force-stop", package_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+            except Exception:
+                pass
+
+    @property
+    def device_serial(self) -> str:
+        """获取设备序列号"""
+        if self.adb_endpoint:
+            return self.adb_endpoint
+        try:
+            return self.d.serial
+        except Exception:
+            return "unknown_device"
+
+    def get_device_info(self) -> dict:
+        """
+        获取设备元信息
+
+        Returns:
+            包含 serial, model, android_version, manufacturer 的字典
+        """
+        info = {
+            "serial": self.device_serial,
+            "model": "Unknown",
+            "android_version": "Unknown",
+            "manufacturer": "Unknown",
+        }
+
+        try:
+            model = self.d.shell(["getprop", "ro.product.model"]).output.strip()
+            if model:
+                info["model"] = model
+        except Exception:
+            pass
+
+        try:
+            version = self.d.shell(["getprop", "ro.build.version.release"]).output.strip()
+            if version:
+                info["android_version"] = version
+        except Exception:
+            pass
+
+        try:
+            manufacturer = self.d.shell(["getprop", "ro.product.manufacturer"]).output.strip()
+            if manufacturer:
+                info["manufacturer"] = manufacturer
+        except Exception:
+            pass
+
+        return info
+
     def start_app(self, app):
         """Start app by name."""
         package_name = self.app_package_names.get(app)
         if not package_name:
             raise ValueError(f"App '{app}' is not registered with a package name.")
-        self.d.app_start(package_name, stop=True)
-        time.sleep(1)
-        if not self.d.app_wait(package_name, timeout=10):
-            raise RuntimeError(f"Failed to start app '{app}' with package '{package_name}'")
+        self.app_start(package_name)
 
     def app_start(self, package_name):
         """Start app by package name."""
         self.d.app_start(package_name, stop=True)
         time.sleep(1)
         if not self.d.app_wait(package_name, timeout=10):
+            self._force_launch_package(package_name)
+        time.sleep(1)
+        if not self._is_foreground_package(package_name):
+            self._force_launch_package(package_name)
+        time.sleep(1)
+        if not self._is_foreground_package(package_name):
             raise RuntimeError(f"Failed to start package '{package_name}'")
 
     def app_stop(self, package_name):
@@ -78,11 +164,11 @@ class AndroidDevice:
 
     def screenshot(self, path):
         """Take screenshot and save to path."""
-        self.d.screenshot(path)
+        self._retry_device_call(lambda: self.d.screenshot(path), "screenshot")
 
     def click(self, x, y):
         """Click at coordinates."""
-        self.d.click(x, y)
+        self._retry_device_call(lambda: self.d.click(x, y), "click")
         time.sleep(0.5)
 
     def is_input_active(self):
@@ -135,19 +221,86 @@ class AndroidDevice:
 
     def swipe(self, direction, scale=0.5):
         """Swipe in direction."""
-        self.d.swipe_ext(direction=direction, scale=scale)
+        self._retry_device_call(lambda: self.d.swipe_ext(direction=direction, scale=scale), "swipe")
 
     def keyevent(self, key):
         """Send key event."""
-        self.d.keyevent(key)
+        self._retry_device_call(lambda: self.d.keyevent(key), "keyevent")
 
     def dump_hierarchy(self):
         """Dump UI hierarchy."""
-        return self.d.dump_hierarchy()
+        return self._retry_device_call(lambda: self.d.dump_hierarchy(), "dump_hierarchy")
 
     def dump_xml(self, path):
         """Dump UI hierarchy XML to file."""
-        xml_content = self.d.dump_hierarchy()
+        xml_content = self.dump_hierarchy()
         with open(path, 'w', encoding='utf-8') as f:
             f.write(xml_content)
         return xml_content
+
+    def _retry_device_call(self, func, operation: str, retries: int = 2):
+        last_exc = None
+        for attempt in range(1, retries + 2):
+            try:
+                return func()
+            except Exception as exc:
+                last_exc = exc
+                logging.warning(
+                    "Android device %s failed on attempt %s/%s: %s",
+                    operation,
+                    attempt,
+                    retries + 1,
+                    exc,
+                )
+                if attempt > retries:
+                    break
+                self._reset_uiautomator(self.device_serial)
+                self.d = self._connect_with_retry(self.adb_endpoint)
+                time.sleep(1.0 * attempt)
+        if last_exc:
+            raise last_exc
+        raise RuntimeError(f"Android device operation failed: {operation}")
+
+    def _force_launch_package(self, package_name):
+        """Fallback launch path when app_start does not bring the app to foreground."""
+        if not self.adb_endpoint:
+            try:
+                self.d.app_start(package_name, stop=True)
+            except Exception:
+                pass
+            return
+        try:
+            subprocess.run(
+                [
+                    "adb",
+                    "-s",
+                    self.adb_endpoint,
+                    "shell",
+                    "monkey",
+                    "-p",
+                    package_name,
+                    "-c",
+                    "android.intent.category.LAUNCHER",
+                    "1",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except Exception as exc:
+            logging.warning("Fallback launch failed for %s: %s", package_name, exc)
+
+    def _is_foreground_package(self, package_name):
+        try:
+            current = self.d.app_current() or {}
+        except Exception:
+            current = {}
+        current_pkg = str(current.get("package") or current.get("packageName") or "")
+        if current_pkg == package_name:
+            return True
+        try:
+            xml = self.d.dump_hierarchy()
+        except Exception:
+            return False
+        return package_name in xml

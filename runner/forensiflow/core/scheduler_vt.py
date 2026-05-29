@@ -9,6 +9,7 @@ import time
 import json
 import os
 import pathlib
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Callable
 
@@ -19,6 +20,7 @@ from .semantic_matcher import SemanticMatcher, SemanticMatcherMock
 from .rag_template_matcher import RAGTemplateMatcher, RAGTemplateMatcherMock
 from .script_registry import ScriptRegistry
 from .xml_utils import XMLSimplifier
+from .config import DEFAULT_MIMO_API_BASE, DEFAULT_MIMO_MODEL, get_llm_config
 # VisionTasker 集成已移除，改用 API 调用
 
 
@@ -43,15 +45,28 @@ class TaskSchedulerVT:
         """硬编码常量配置集中管理"""
 
         # API 端点配置
-        QWEN_API_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-        CHATGLM_API_URL = "https://open.bigmodel.cn/api/paas/v4"
+        QWEN_API_URL = (
+            os.getenv("FORENSIFLOW_API_BASE")
+            or os.getenv("FORENSIFLOW_LLM_API_BASE")
+            or os.getenv("LLM_API_BASE")
+            or os.getenv("PAGE_AGENT_MOBILE_API_BASE")
+            or os.getenv("QWEN_API_URL")
+            or os.getenv("YUNWU_API_URL", DEFAULT_MIMO_API_BASE)
+        )
+        CHATGLM_API_URL = os.getenv("CHATGLM_API_URL", "https://open.bigmodel.cn/api/paas/v4")
 
         # 默认模型配置
-        QWEN_DEFAULT_MODEL = "qwen3.5-27b"  # qwen-turbo, qwen-plus, qwen-max
+        QWEN_DEFAULT_MODEL = (
+            os.getenv("FORENSIFLOW_MODEL")
+            or os.getenv("FORENSIFLOW_LLM_MODEL")
+            or os.getenv("LLM_MODEL")
+            or os.getenv("PAGE_AGENT_MOBILE_MODEL")
+            or os.getenv("QWEN_DEFAULT_MODEL", DEFAULT_MIMO_MODEL)
+        )
         CHATGLM_DEFAULT_MODEL = "glm-4-flash"
 
         # VisionTasker 路径配置
-        VISIONTASKER_PATH = "/root/MobiAgent/external/VisionTasker"
+        VISIONTASKER_PATH = str(Path(__file__).resolve().parents[3] / "external" / "VisionTasker")
         MODEL_PATH = "pt_model/yolo_mdl.pt"
         MODEL_PREFIX = "pt_model/yolo_vins_"
         MODEL_SUFFIX = "_mdl.pt"
@@ -137,16 +152,21 @@ class TaskSchedulerVT:
         self._vt_module_path = self._Config.VISIONTASKER_PATH
         self._vt_process_img = None  # process_img 函数引用
 
-        # Planner configuration
-        self.planner_api_key = planner_api_key
-        self.planner_model = planner_model
-        self.planner_base_url = planner_base_url
+        # Planner configuration: all OpenAI-compatible model calls share the same Mimo/Momi config.
+        llm_config = get_llm_config(
+            api_key=planner_api_key,
+            api_base=planner_base_url,
+            model=planner_model,
+        )
+        self.planner_api_key = llm_config.api_key
+        self.planner_model = llm_config.model
+        self.planner_base_url = llm_config.api_base
 
         # 根据提供商设置默认值
         if planner_provider == "qwen":
-            if not planner_base_url:
+            if not self.planner_base_url:
                 self.planner_base_url = self._Config.QWEN_API_URL
-            if not planner_model:
+            if not self.planner_model:
                 self.planner_model = self._Config.QWEN_DEFAULT_MODEL
         elif planner_provider == "chatglm":
             if not planner_base_url:
@@ -161,6 +181,7 @@ class TaskSchedulerVT:
         self.history: List[str] = []
         self.actions: List[Dict[str, Any]] = []
         self.reacts: List[Dict[str, Any]] = []
+        self.script_results: List[Dict[str, Any]] = []
         self.step = 0
 
         # 任务上下文管理（用于步骤序列模式）
@@ -326,6 +347,15 @@ class TaskSchedulerVT:
                 # 导入模型加载函数
                 import core.import_models as import_models
 
+                vt_mode = os.getenv("FORENSIFLOW_VT_MODE", "auto").strip().lower()
+                if vt_mode in {"ocr", "ocr_only", "light"} or (
+                    vt_mode == "auto" and self._available_memory_gb() < float(os.getenv("FORENSIFLOW_VT_FULL_MIN_MEM_GB", "5.5"))
+                ):
+                    logging.info("🔎 VisionTasker 使用 OCR-only 轻量兜底模式，避免完整模型加载触发 OOM")
+                    loaded = self._load_visiontasker_ocr_fallback(import_models, label_path_dir)
+                    if loaded:
+                        return True
+
                 # 加载模型
                 _model_ver, _model_det, _model_cls, _preprocess, _ocr = import_models.import_all_models(
                     alg,
@@ -369,6 +399,145 @@ class TaskSchedulerVT:
             import traceback
             traceback.print_exc()
             return False
+
+    def _available_memory_gb(self) -> float:
+        """Return currently available memory in GiB, best-effort."""
+        try:
+            with open("/proc/meminfo", "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("MemAvailable:"):
+                        return int(line.split()[1]) / 1024 / 1024
+        except Exception:
+            pass
+        return 0.0
+
+    def _load_visiontasker_ocr_fallback(self, import_models, label_path_dir: str) -> bool:
+        """Load a lightweight OCR-backed VisionTasker fallback.
+
+        The full VisionTasker path loads PaddleOCR, YOLO and CLIP. On memory
+        constrained experiment hosts that can be killed by the OS before Python
+        can raise an exception. The OCR fallback still uses screenshots,
+        PaddleOCR, semantic matching and LLM decision, which is sufficient when
+        XML matching fails because text is visually present but absent/stale in
+        the dumped hierarchy.
+        """
+        try:
+            import_models._prepare_paddleocr_top_level_imports()
+            from paddleocr import PaddleOCR
+
+            ocr = PaddleOCR(use_angle_cls=True, show_log=False)
+            self._vt_models = ("ocr_only", None, None, None, ocr)
+            self._vt_process_img = self._process_img_ocr_fallback
+            self._vt_models_loaded = True
+            self._vt_alg = "ocr_only"
+            self._vt_accurate_ocr = False
+            self._vt_label_path_dir = label_path_dir
+            self._vt_high_conf_flag = False
+            self._vt_clean_save = True
+            self._vt_ocr_save_flag = "save"
+            self._vt_ocr_output_only = True
+            self._vt_workflow_only = True
+            logging.info("✓ VisionTasker OCR-only 兜底加载成功")
+            return True
+        except Exception as exc:
+            logging.error(f"✗ VisionTasker OCR-only 兜底加载失败: {exc}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _process_img_ocr_fallback(
+        self,
+        label_path_dir,
+        img_path,
+        output_root,
+        layout_json_dir,
+        high_conf_flag,
+        alg,
+        clean_save,
+        plot_show,
+        ocr_save_flag,
+        model_ver,
+        model_det,
+        model_cls,
+        preprocess,
+        pd_free_ocr=None,
+        ocr_only=True,
+        workflow_only=True,
+        accurate_ocr=False,
+        lang="zh",
+    ):
+        """Return VisionTasker-compatible text elements from PaddleOCR."""
+        ocr = pd_free_ocr
+        if ocr is None:
+            return []
+        raw = ocr.ocr(img_path, cls=True)
+        elements = []
+
+        def is_ocr_line(value):
+            if not isinstance(value, (list, tuple)) or len(value) < 2:
+                return False
+            box, text_score = value[0], value[1]
+            if not isinstance(box, (list, tuple)) or len(box) < 4:
+                return False
+            if not all(isinstance(point, (list, tuple)) and len(point) >= 2 for point in box[:4]):
+                return False
+            return isinstance(text_score, (list, tuple)) and len(text_score) >= 1 and isinstance(text_score[0], str)
+
+        def iter_lines(payload):
+            if not payload:
+                return
+            if is_ocr_line(payload):
+                yield payload
+                return
+            if isinstance(payload, (list, tuple)):
+                for item in payload:
+                    yield from iter_lines(item)
+
+        for index, line in enumerate(iter_lines(raw) or []):
+            try:
+                box = line[0]
+                text = str(line[1][0] or "").strip()
+                score = float(line[1][1]) if len(line[1]) > 1 else 0.0
+                if not text:
+                    continue
+                xs = [float(point[0]) for point in box]
+                ys = [float(point[1]) for point in box]
+                elements.append(
+                    {
+                        "id": f"ocr_{index}",
+                        "class": "Text",
+                        "text_content": text,
+                        "sub_class": "OCRText",
+                        "score": score,
+                        "location": {
+                            "left": int(min(xs)),
+                            "top": int(min(ys)),
+                            "right": int(max(xs)),
+                            "bottom": int(max(ys)),
+                        },
+                    }
+                )
+            except Exception:
+                continue
+
+        os.makedirs(layout_json_dir or output_root, exist_ok=True)
+        return elements
+
+    def _format_rag_prompt_examples(self, matches, max_examples: int = 3) -> str:
+        """Format RAG examples without initializing another matcher/model."""
+        if not matches:
+            return ""
+        examples = ["\n## 📚 参考案例（相似历史任务）\n以下是与你当前任务相似的历史任务案例，请直接参考其结构：\n"]
+        for match in matches[:max_examples]:
+            template = match.template
+            example_obj = {
+                "相似度": f"{match.score:.2f}",
+                "app": template.get('app', 'Unknown'),
+                "task": template.get('task', ''),
+                "steps": template.get('steps', []),
+            }
+            examples.append("```json\n" + json.dumps(example_obj, ensure_ascii=False, indent=2) + "\n```\n")
+        return "\n".join(examples)
 
     def _unload_visiontasker_models(self):
         """释放 VisionTasker 模型资源"""
@@ -449,7 +618,7 @@ class TaskSchedulerVT:
                     score=1.0,  # 外部传入的模板已经通过阈值筛选
                     rank=1
                 )
-                rag_examples = self.rag_matcher.format_prompt_examples([mock_match], max_examples=1)
+                rag_examples = self._format_rag_prompt_examples([mock_match], max_examples=1)
                 logging.info(f"✅ 外部模板示例已添加到提示词\n")
 
             except Exception as e:
@@ -477,7 +646,7 @@ class TaskSchedulerVT:
                         logging.info(f"   [{match.template.get('app', 'Unknown')}] {match.template.get('task', 'Unknown')} (相似度: {match.score:.3f})")
 
                         # 格式化为 Few-Shot 示例
-                        rag_examples = self.rag_matcher.format_prompt_examples(top_matches, max_examples=1)
+                        rag_examples = self._format_rag_prompt_examples(top_matches, max_examples=1)
                         logging.info(f"✅ RAG 示例已添加到提示词\n")
                     else:
                         logging.info(f"ℹ️  未找到足够相似的任务模板 (最佳匹配: {top_matches[0].score if top_matches else 0:.3f})\n")
@@ -545,7 +714,7 @@ class TaskSchedulerVT:
                 temperature=0.01  # 低温度获得稳定输出
             )
 
-            response_text = response.choices[0].message.content
+            response_text = self._extract_llm_response_text(response)
 
             logging.info(f"\n{'='*60}")
             logging.info(f"📥 LLM 规划响应:")
@@ -554,22 +723,7 @@ class TaskSchedulerVT:
             logging.info(f"{'='*60}\n")
 
             # 解析 JSON 响应
-            import re
-            import json
-
-            # 尝试提取 JSON
-            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                # 尝试直接查找 JSON 对象
-                json_match = re.search(r'(\{.*?\})', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(1)
-                else:
-                    raise ValueError("无法在响应中找到有效的 JSON")
-
-            result = json.loads(json_str)
+            result = self._extract_json_from_response(response_text)
 
             # 验证必需字段（支持新格式 app 和旧格式 app_name）
             if "app" not in result and "app_name" not in result:
@@ -626,11 +780,11 @@ class TaskSchedulerVT:
 
         try:
             # 1. 截图当前界面
-            screenshot_path = os.path.join(self.run_data_dir, f"check_completion_{self.step}.jpg")
+            screenshot_path = os.path.abspath(os.path.join(self.run_data_dir, f"check_completion_{self.step}.jpg"))
             self.device.screenshot(screenshot_path)
 
             # 2. VisionTasker 检测
-            ui_json_path = os.path.join(self.run_data_dir, f"ui_check_{self.step}.json")
+            ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_check_{self.step}.json"))
 
             original_cwd = os.getcwd()
             os.chdir(self._vt_module_path)
@@ -737,7 +891,7 @@ class TaskSchedulerVT:
                 temperature=0.01  # 低温度获得稳定输出
             )
 
-            response_text = response.choices[0].message.content
+            response_text = self._extract_llm_response_text(response)
 
             logging.info(f"\n{'='*60}")
             logging.info(f"📥 LLM 任务完成判断响应:")
@@ -746,18 +900,7 @@ class TaskSchedulerVT:
             logging.info(f"{'='*60}\n")
 
             # 7. 解析 JSON 响应
-            import re
-            json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
-            if json_match:
-                json_str = json_match.group(1)
-            else:
-                json_match = re.search(r'(\{.*?\})', response_text, re.DOTALL)
-                if json_match:
-                    json_str = json_match.group(1)
-                else:
-                    raise ValueError("无法在响应中找到有效的 JSON")
-
-            result = json.loads(json_str)
+            result = self._extract_json_from_response(response_text)
 
             # 8. 验证并返回结果
             completed = result.get("completed", False)
@@ -810,21 +953,46 @@ class TaskSchedulerVT:
             # 2. 根据操作类型执行（不区分大小写）
             action_lower = action.lower()
 
+            if action_lower == "launch":
+                package_name = step.get("package_name") or params.get("package_name")
+                app_name = step.get("app_name") or params.get("app_name")
+                if package_name:
+                    logging.info(f"    📱 Launch 已由步骤序列入口处理，确认包名: {package_name}")
+                elif app_name:
+                    logging.info(f"    📱 Launch 已由步骤序列入口处理，确认应用: {app_name}")
+                else:
+                    logging.info("    📱 Launch step skipped: app already launched by scheduler")
+                return True
+
             if action_lower == "click":
-                return self._execute_click_step(target)
+                return self._execute_click_step(step)
 
             elif action_lower == "input":
                 text = params.get("text", "")
                 return self._execute_input_step(target, text)
 
             elif action_lower == "swipe":
-                direction = params.get("direction", "down")
-                return self._execute_swipe_step(direction)
+                direction = params.get("direction") or step.get("direction") or "down"
+                return self._execute_swipe_step(direction, step)
 
             elif action_lower == "wait":
-                duration = params.get("duration", 2)
+                duration = (
+                    params.get("duration")
+                    or params.get("duration_seconds")
+                    or step.get("duration")
+                    or step.get("duration_seconds")
+                    or 2
+                )
+                if step.get("duration_ms"):
+                    duration = float(step["duration_ms"]) / 1000.0
                 logging.info(f"    ⏱️ 等待 {duration} 秒...")
-                time.sleep(duration)
+                time.sleep(float(duration))
+                return True
+
+            elif action_lower in {"back", "pressback", "press_back"}:
+                logging.info("    ↩️ 返回上一页")
+                self.device.keyevent("BACK")
+                time.sleep(1)
                 return True
 
             elif action_lower == "forensics":
@@ -843,6 +1011,10 @@ class TaskSchedulerVT:
                     device=self.device
                 )
 
+                script_result = ScriptRegistry.get_last_execution_result()
+                if script_result:
+                    self.script_results.append(script_result)
+
                 if success:
                     # 记录到 reacts
                     self.reacts.append({
@@ -850,7 +1022,8 @@ class TaskSchedulerVT:
                         "function": {
                             "name": "CallScript",
                             "parameters": {
-                                "script": script_name
+                                "script": script_name,
+                                "script_result": script_result or {}
                             }
                         },
                         "action_index": self.step
@@ -868,7 +1041,86 @@ class TaskSchedulerVT:
             traceback.print_exc()
             return False
 
-    def _execute_click_step(self, target: str) -> bool:
+    def _click_target_value(self, target):
+        """Return the actual click locator from a planner/template step."""
+        if isinstance(target, dict):
+            for nested_key in ("target", "match"):
+                nested = target.get(nested_key)
+                if isinstance(nested, (dict, str)) and nested:
+                    return nested
+        return target
+
+    def _click_target_display(self, target) -> str:
+        target = self._click_target_value(target)
+        spec = self._parse_structured_click_target(target)
+        if spec:
+            parts = []
+            for key in ("resource_id", "text", "content_desc", "class"):
+                if spec.get(key):
+                    parts.append(f"{key}={spec[key]}")
+            return "{" + ", ".join(parts) + "}"
+        return str(target or "")
+
+    def _parse_structured_click_target(self, target):
+        if isinstance(target, dict):
+            raw = target
+        else:
+            text = str(target or "").strip()
+            if not (text.startswith("{") and text.endswith("}")):
+                return {}
+            try:
+                import ast
+                raw = ast.literal_eval(text)
+            except Exception:
+                try:
+                    import json
+                    raw = json.loads(text)
+                except Exception:
+                    return {}
+            if not isinstance(raw, dict):
+                return {}
+
+        aliases = {
+            "resource_id": ("resource_id", "resource-id", "id"),
+            "text": ("text", "target_text", "label", "title"),
+            "content_desc": ("content_desc", "content-desc", "description", "desc"),
+            "class": ("class", "class_name", "className"),
+        }
+        spec = {}
+        for canonical, keys in aliases.items():
+            for key in keys:
+                value = str(raw.get(key) or "").strip()
+                if value:
+                    spec[canonical] = value
+                    break
+        bounds = raw.get("bounds")
+        if isinstance(bounds, dict):
+            try:
+                spec["bounds"] = {
+                    "left": int(bounds["left"]),
+                    "top": int(bounds["top"]),
+                    "right": int(bounds["right"]),
+                    "bottom": int(bounds["bottom"]),
+                }
+            except Exception:
+                pass
+        elif isinstance(bounds, (list, tuple)) and len(bounds) == 4:
+            try:
+                spec["bounds"] = {
+                    "left": int(bounds[0]),
+                    "top": int(bounds[1]),
+                    "right": int(bounds[2]),
+                    "bottom": int(bounds[3]),
+                }
+            except Exception:
+                pass
+        elif isinstance(bounds, str) and bounds.strip():
+            parsed = self._parse_xml_bounds(bounds)
+            if parsed:
+                spec["bounds"] = parsed
+        return spec
+
+    def _execute_click_step(self, target) -> bool:
         """
         执行点击步骤（XML优先）
 
@@ -878,7 +1130,10 @@ class TaskSchedulerVT:
         Returns:
             bool: 是否执行成功
         """
-        logging.info(f"    🎯 点击目标: {target}")
+        target = self._click_target_value(target)
+        target_spec = self._parse_structured_click_target(target)
+        target_display = self._click_target_display(target)
+        logging.info(f"    🎯 点击目标: {target_display}")
 
         # 1. 尝试 XML 匹配
         logging.info(f"    🔍 步骤 1/2: 尝试 XML 匹配...")
@@ -907,16 +1162,17 @@ class TaskSchedulerVT:
 
                 # 记录到 reacts
                 self.reacts.append({
-                    "reasoning": f"通过 XML 匹配点击 '{target}'",
+                    "reasoning": f"通过 XML 匹配点击 '{target_display}'",
                     "function": {
                         "name": "click",
-                        "parameters": {"target": target, "x": center_x, "y": center_y}
+                        "parameters": {"target": target_display, "x": center_x, "y": center_y}
                     },
                     "action_index": self.step
                 })
 
                 time.sleep(1)
                 return True
+            logging.info(f"    ✗ XML 未找到匹配元素: {target_display}")
 
         except Exception as e:
             logging.info(f"    ✗ XML 匹配失败: {e}")
@@ -925,10 +1181,31 @@ class TaskSchedulerVT:
             if self._planned_steps:
                 self._failed_attempts.append({
                     "action": "click",
-                    "target": target,
+                    "target": target_display,
                     "method": "XML 匹配",
                     "reason": str(e) if e else "未找到匹配元素"
                 })
+
+        if target_spec.get("bounds"):
+            bounds = target_spec["bounds"]
+            center_x = (bounds["left"] + bounds["right"]) // 2
+            center_y = (bounds["top"] + bounds["bottom"]) // 2
+            logging.info(f"    ✓ 使用模板 bounds 兜底点击: ({center_x}, {center_y})")
+            self.device.click(center_x, center_y)
+            self.reacts.append({
+                "reasoning": f"通过模板 bounds 点击 '{target_display}'",
+                "function": {
+                    "name": "click",
+                    "parameters": {"target": target_display, "x": center_x, "y": center_y, "method": "template_bounds"}
+                },
+                "action_index": self.step
+            })
+            time.sleep(1)
+            return True
+
+        if target_spec:
+            logging.warning(f"    ⚠️ 结构化目标未命中 XML，跳过语义兜底以避免误点: {target_display}")
+            return False
 
         # 2. XML 失败，尝试 VisionTasker + LLM 动态上下文循环
         logging.info(f"    🔍 步骤 2/2: 尝试 VisionTasker + LLM 动态上下文循环...")
@@ -939,10 +1216,10 @@ class TaskSchedulerVT:
 
             if use_context:
                 # 使用动态上下文循环（支持滑动、多轮决策）
-                return self._execute_step_with_dynamic_context("click", target)
+                return self._execute_step_with_dynamic_context("click", target_display)
             else:
                 # 原有逻辑：单次 LLM 决策（非步骤序列模式）
-                return self._execute_click_legacy_fallback(target)
+                return self._execute_click_legacy_fallback(target_display)
 
         except Exception as e:
             logging.error(f"    ✗ VisionTasker + LLM 匹配失败: {e}")
@@ -967,12 +1244,12 @@ class TaskSchedulerVT:
 
         try:
             # 截图
-            screenshot_path = os.path.join(self.run_data_dir, f"{self.step}.jpg")
+            screenshot_path = os.path.abspath(os.path.join(self.run_data_dir, f"{self.step}.jpg"))
             self.device.screenshot(screenshot_path)
             logging.info(f"    📸 截图已保存: {screenshot_path}")
 
             # VisionTasker 检测
-            ui_json_path = os.path.join(self.run_data_dir, f"ui_{self.step}.json")
+            ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_{self.step}.json"))
 
             original_cwd = os.getcwd()
             os.chdir(self._vt_module_path)
@@ -1090,16 +1367,22 @@ class TaskSchedulerVT:
         """
         import time
 
+        if not self._vt_models_loaded or self._vt_models is None or self._vt_process_img is None:
+            logging.info("    🔄 VisionTasker 模型未就绪，尝试重新加载...")
+            if not self._load_visiontasker_models():
+                logging.error("    ✗ VisionTasker 模型不可用，无法执行视觉兜底决策")
+                return False
+
         for iteration in range(max_iterations):
             logging.info(f"\n    🔄 动态上下文循环 {iteration + 1}/{max_iterations}")
 
             # 1. 截图
-            screenshot_path = os.path.join(self.run_data_dir, f"{self.step}_iter{iteration}.jpg")
+            screenshot_path = os.path.abspath(os.path.join(self.run_data_dir, f"{self.step}_iter{iteration}.jpg"))
             self.device.screenshot(screenshot_path)
             logging.info(f"    📸 截图已保存: {screenshot_path}")
 
             # 2. VisionTasker 检测
-            ui_json_path = os.path.join(self.run_data_dir, f"ui_{self.step}_iter{iteration}.json")
+            ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_{self.step}_iter{iteration}.json"))
 
             original_cwd = os.getcwd()
             os.chdir(self._vt_module_path)
@@ -1148,14 +1431,20 @@ class TaskSchedulerVT:
             action = decision.get("action", "")
             reasoning = decision.get("reasoning", "")
             params = decision.get("parameters", {})
+            step_completed = decision.get("step_completed")
 
-            logging.info(f"    🎯 LLM 决策: {action}, 理由: {reasoning}")
+            logging.info(f"    🎯 LLM 决策: {action}, 当前步骤是否完成: {step_completed}, 理由: {reasoning}")
 
             # 不区分大小写
             action_lower = action.lower()
 
             # 4. 根据决策执行操作
             if action_lower == "done":
+                if decision.get("step_completed") is False:
+                    logging.warning(f"    ⚠️ LLM 输出 done 但当前步骤是否完成=false，继续重试当前步骤")
+                    time.sleep(1)
+                    continue
+
                 logging.info(f"    ✓ LLM 认为当前步骤已完成")
                 self.reacts.append({
                     "reasoning": reasoning,
@@ -1212,7 +1501,15 @@ class TaskSchedulerVT:
                         })
 
                         time.sleep(1)
-                        return True
+
+                        if self._decision_completes_current_step(decision, current_target, llm_target):
+                            logging.info(f"    ✓ 当前步骤目标已执行: {current_target}")
+                            return True
+
+                        logging.info(
+                            f"    ↻ 已执行清障/中间动作 '{llm_target}'，继续重试当前步骤: {current_target}"
+                        )
+                        continue
                 else:
                     logging.error(f"    ✗ 未找到元素: '{llm_target}'")
                     self._failed_attempts.append({
@@ -1269,7 +1566,14 @@ class TaskSchedulerVT:
                         })
 
                         time.sleep(1)
-                        return True
+                        if self._decision_completes_current_step(decision, current_target, llm_target):
+                            logging.info(f"    ✓ 当前步骤目标已执行: {current_target}")
+                            return True
+
+                        logging.info(
+                            f"    ↻ 已执行清障/中间输入 '{llm_target}'，继续重试当前步骤: {current_target}"
+                        )
+                        continue
                 else:
                     logging.error(f"    ✗ 未找到元素: '{llm_target}'")
                     self._failed_attempts.append({
@@ -1295,6 +1599,47 @@ class TaskSchedulerVT:
         # 循环结束仍未完成
         logging.error(f"    ✗ 动态上下文循环达到最大次数 ({max_iterations})，仍未完成")
         return False
+
+    def _decision_completes_current_step(
+        self,
+        decision: Dict[str, Any],
+        current_target: str,
+        decision_target: str
+    ) -> bool:
+        """
+        判断一次 LLM fallback 操作是否完成当前步骤。
+
+        优先使用模型显式输出的 step_completed。只有旧模型输出没有该字段时，
+        才退回到目标文本匹配，兼容旧格式。
+        """
+        step_completed = decision.get("step_completed")
+        if isinstance(step_completed, bool):
+            return step_completed
+
+        return self._is_decision_target_current_step(current_target, decision_target)
+
+    def _is_decision_target_current_step(self, current_target: str, decision_target: str) -> bool:
+        """
+        判断 fallback 决策是否真正执行了当前步骤目标。
+
+        LLM 在弹窗/引导页上可能会先点击“以后再说”等清障元素。清障动作是合理的，
+        但不能被当成“点击 新聊天 #fab”这类原始步骤已经完成。
+        """
+        def normalize(value: str) -> str:
+            value = (value or "").strip().lower()
+            if "#" in value:
+                value = value.split("#", 1)[0]
+            for token in ["按钮键", "按钮", "键", "图标", "标题", "target", "click"]:
+                value = value.replace(token, "")
+            return "".join(ch for ch in value if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
+
+        current_norm = normalize(current_target)
+        decision_norm = normalize(decision_target)
+
+        if not current_norm or not decision_norm:
+            return False
+
+        return current_norm in decision_norm or decision_norm in current_norm
 
     def _execute_input_step(self, target: str, text: str) -> bool:
         """
@@ -1362,10 +1707,10 @@ class TaskSchedulerVT:
         logging.info(f"    🔍 步骤 2/2: 尝试 VisionTasker + LLM 决策...")
 
         try:
-            screenshot_path = os.path.join(self.run_data_dir, f"{self.step}.jpg")
+            screenshot_path = os.path.abspath(os.path.join(self.run_data_dir, f"{self.step}.jpg"))
             self.device.screenshot(screenshot_path)
 
-            ui_json_path = os.path.join(self.run_data_dir, f"ui_{self.step}.json")
+            ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_{self.step}.json"))
 
             original_cwd = os.getcwd()
             os.chdir(self._vt_module_path)
@@ -1460,7 +1805,7 @@ class TaskSchedulerVT:
             traceback.print_exc()
             return False
 
-    def _execute_swipe_step(self, direction: str) -> bool:
+    def _execute_swipe_step(self, direction: str, step: Optional[Dict[str, Any]] = None) -> bool:
         """
         执行滑动步骤
 
@@ -1492,15 +1837,30 @@ class TaskSchedulerVT:
         import time
 
         try:
-            # 执行滑动
-            self.device.swipe(actual_direction)
+            if isinstance(step, dict) and {"start_y", "end_y"} <= set(step):
+                raw_device = getattr(self.device, "d", None)
+                if raw_device is None:
+                    raise RuntimeError("raw uiautomator2 device is not available for coordinate swipe")
+                width, height = self._device_window_size()
+                x_ratio = float(step.get("x_ratio", step.get("x", 0.5)))
+                x = int(width * x_ratio) if 0 < x_ratio <= 1 else int(x_ratio)
+                start_y_raw = float(step.get("start_y", 0.8))
+                end_y_raw = float(step.get("end_y", 0.4))
+                start_y = int(height * start_y_raw) if 0 < start_y_raw <= 1 else int(start_y_raw)
+                end_y = int(height * end_y_raw) if 0 < end_y_raw <= 1 else int(end_y_raw)
+                duration = float(step.get("duration", step.get("duration_seconds", 0.3)))
+                logging.info(f"    👆 区域滑动: ({x}, {start_y}) -> ({x}, {end_y}), duration={duration}")
+                raw_device.swipe(x, start_y, x, end_y, duration=duration)
+            else:
+                # 执行滑动
+                self.device.swipe(actual_direction)
 
             # 记录到 reacts
             self.reacts.append({
                 "reasoning": f"向{direction}滑动（内容滚动）",
                 "function": {
                     "name": "swipe",
-                    "parameters": {"direction": direction, "actual_direction": actual_direction}
+                    "parameters": {"direction": direction, "actual_direction": actual_direction, "step": step or {}}
                 },
                 "action_index": self.step
             })
@@ -1513,6 +1873,16 @@ class TaskSchedulerVT:
             import traceback
             traceback.print_exc()
             return False
+
+    def _device_window_size(self) -> tuple:
+        raw_device = getattr(self.device, "d", None)
+        if raw_device is not None:
+            try:
+                width, height = raw_device.window_size()
+                return int(width), int(height)
+            except Exception:
+                pass
+        return 1080, 1920
 
     def _execute_forensics_step(self, app_name: str, forensics_type: str) -> bool:
         """
@@ -1687,6 +2057,7 @@ class TaskSchedulerVT:
                         "target": element_text,
                         "reasoning": f"语义匹配成功 (BGE, score={match_result.score:.3f})",
                         "method": "semantic_match",
+                        "step_completed": True,
                         "element": match_result.element
                     }
                 else:
@@ -1771,7 +2142,7 @@ class TaskSchedulerVT:
         )
 
         # 5. 解析响应
-        decision_text = response.choices[0].message.content
+        decision_text = self._extract_llm_response_text(response)
 
         logging.info(f"\n{'='*60}")
         logging.info(f"    📥 LLM 的响应 (Step {self.step}):")
@@ -1785,6 +2156,7 @@ class TaskSchedulerVT:
         logging.info(f"    📊 解析后的决策:")
         logging.info(f"       - Action: {decision.get('action', 'unknown')}")
         logging.info(f"       - Target: {decision.get('target', '(none)')}")
+        logging.info(f"       - Step completed: {decision.get('step_completed', None)}")
         logging.info(f"       - Reasoning: {decision.get('reasoning', '')}")
         logging.info(f"")
 
@@ -1836,6 +2208,7 @@ class TaskSchedulerVT:
         self.history = []
         self.actions = []
         self.reacts = []
+        self.script_results = []
         self.step = 0
 
         # 抽象任务模式：LLM 拆分任务为步骤序列，然后逐步执行
@@ -1854,6 +2227,12 @@ class TaskSchedulerVT:
                 # 2. 启动应用（从模板第一步提取包名）
                 app_name = plan_result.get('app') or plan_result.get('app_name')
                 steps = plan_result['steps']
+                if rag_template and isinstance(rag_template.get("steps"), list):
+                    template_steps = rag_template["steps"]
+                    if template_steps:
+                        logging.info("📌 使用外部模板步骤覆盖规划结果中的脚本边界步骤，确保 CallScript 与注册表一致")
+                        steps = template_steps
+                        plan_result["steps"] = steps
 
                 # 初始化任务上下文管理
                 self._original_task = task
@@ -1895,13 +2274,22 @@ class TaskSchedulerVT:
 
                 logging.info(f"✓ 应用已启动\n")
 
-                # 4. 加载 VisionTasker 模型（仅在需要时加载，作为 fallback）
-                self._load_visiontasker_models()
+                # 4. 仅当步骤需要文本/视觉定位时加载 VisionTasker。
+                needs_visual_matching = any(
+                    str(step.get("action", "")).lower() in {"click", "input"}
+                    for step in steps
+                )
+                if needs_visual_matching:
+                    self._load_visiontasker_models()
 
                 # 5. 逐步执行步骤序列
                 logging.info(f"\n{'='*60}")
                 logging.info(f"🚀 开始执行步骤序列（共 {len(steps)} 步）")
                 logging.info(f"{'='*60}\n")
+
+                all_steps_success = True
+                failed_step_index = None
+                failed_step = None
 
                 for i, step in enumerate(steps):
                     # 更新当前步骤索引
@@ -1918,6 +2306,9 @@ class TaskSchedulerVT:
                     success = self._execute_predefined_step(step)
 
                     if not success:
+                        all_steps_success = False
+                        failed_step_index = self.step
+                        failed_step = step
                         logging.error(f"✗ 步骤 {self.step} 执行失败，停止任务")
                         break
 
@@ -1932,7 +2323,10 @@ class TaskSchedulerVT:
                     })
 
                 logging.info(f"\n{'='*60}")
-                logging.info(f"✓ 步骤序列执行完成")
+                if all_steps_success:
+                    logging.info(f"✓ 步骤序列执行完成")
+                else:
+                    logging.error(f"✗ 步骤序列未完成，失败步骤: {failed_step_index}/{len(steps)}")
                 logging.info(f"✓ 任务执行结束，不再检查是否完成")
                 logging.info(f"{'='*60}\n")
 
@@ -1940,13 +2334,18 @@ class TaskSchedulerVT:
                 self.storage_module.save_actions(app_name, old_task, task, self.actions)
                 self.storage_module.save_reacts(self.reacts)
 
-                return {
-                    "completed": True,
+                result = {
+                    "completed": all_steps_success,
                     "total_steps": len(self.actions),
                     "actions": self.actions,
                     "reacts": self.reacts,
+                    "script_results": self.script_results,
                     "data_dir": self.run_data_dir
                 }
+                if not all_steps_success:
+                    result["error"] = f"Failed at step {failed_step_index}: {failed_step}"
+
+                return result
 
             except Exception as e:
                 logging.error(f"✗ 任务执行失败: {e}")
@@ -1957,6 +2356,7 @@ class TaskSchedulerVT:
                     "total_steps": len(self.actions),
                     "actions": self.actions,
                     "reacts": self.reacts,
+                    "script_results": self.script_results,
                     "data_dir": self.run_data_dir,
                     "error": f"Failed to execute task: {e}"
                 }
@@ -2009,6 +2409,7 @@ class TaskSchedulerVT:
             "total_steps": len(self.actions),
             "actions": self.actions,
             "reacts": self.reacts,
+            "script_results": self.script_results,
             "data_dir": self.run_data_dir
         }
 
@@ -2133,8 +2534,8 @@ class TaskSchedulerVT:
 
         try:
             # Use run-specific directory
-            screenshot_path = os.path.join(self.run_data_dir, f"{self.step}.jpg")
-            ui_json_path = os.path.join(self.run_data_dir, f"ui_{self.step}.json")
+            screenshot_path = os.path.abspath(os.path.join(self.run_data_dir, f"{self.step}.jpg"))
+            ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_{self.step}.json"))
 
             # 检查截图文件是否存在
             if not os.path.exists(screenshot_path):
@@ -2256,7 +2657,7 @@ class TaskSchedulerVT:
             )
 
             # Parse response
-            decision_text = response.choices[0].message.content
+            decision_text = self._extract_llm_response_text(response)
 
             # 详细日志：ChatGLM 的响应
             logging.info(f"\n{'='*60}")
@@ -2532,151 +2933,238 @@ class TaskSchedulerVT:
         return search_elements(ui_elements)
 
     def _find_element_in_xml(self, xml_content, target_text):
-        """从简化的 Android UI XML 中查找匹配的元素.
+        """Find a click target in Android XML.
 
-        修改：先使用 XMLSimplifier 简化 XML，再在简化后的树中搜索。
-        这样可以减少 90% 的无关节点，提高匹配准确率。
-
-        Args:
-            xml_content: Android dump_hierarchy 返回的 XML 字符串
-            target_text: 目标文本描述
-
-        Returns:
-            匹配的元素字典，包含 text, class, bounds，未找到返回 None
+        The scheduler normally receives plain text targets, but Codex-generated
+        RAG templates can also carry structured targets from action_path.json.
+        Search both the simplified tree and the raw dump so simplification does
+        not drop narrow controls such as Google Maps filter chips.
         """
         import xml.etree.ElementTree as ET
 
-        # 1. 先简化 XML（减少 90% 的无关节点）
+        target_spec = self._parse_structured_click_target(target_text)
+        target_plain = "" if target_spec else str(target_text or "").strip()
+
+        roots = []
         try:
             simplified_root = self.xml_simplifier.simplify_to_tree(xml_content)
-            if simplified_root is None:
-                logging.debug(f"    XML 简化失败，回退到原始 XML")
-                # 回退：使用原始 XML
-                simplified_root = ET.fromstring(xml_content)
+            if simplified_root is not None:
+                roots.append(("simplified", simplified_root))
         except Exception as e:
-            logging.warning(f"    XML 简化异常: {e}，使用原始 XML")
-            # 回退：使用原始 XML
-            try:
-                simplified_root = ET.fromstring(xml_content)
-            except ET.ParseError as parse_error:
-                logging.error(f"    原始 XML 解析也失败: {parse_error}")
-                return None
+            logging.warning(f"    XML 简化异常: {e}，继续使用原始 XML")
+
+        try:
+            raw_root = ET.fromstring(xml_content)
+            roots.append(("raw", raw_root))
+        except ET.ParseError as parse_error:
+            logging.error(f"    原始 XML 解析失败: {parse_error}")
+
+        if not roots:
+            return None
 
         def parse_bounds(bounds_str):
-            """解析 bounds 属性: [left,top][right,bottom]"""
-            try:
-                # 格式: [123,456][789,1011]
-                import re
-                matches = re.findall(r'\[(\d+),(\d+)\]', bounds_str)
-                if len(matches) == 2:
-                    left, top = int(matches[0][0]), int(matches[0][1])
-                    right, bottom = int(matches[1][0]), int(matches[1][1])
-                    return {"left": left, "top": top, "right": right, "bottom": bottom}
-            except Exception as e:
-                logging.debug(f"    Failed to parse bounds '{bounds_str}': {e}")
-            return None
+            return self._parse_xml_bounds(bounds_str)
 
-        def search_node(node):
-            """递归搜索简化后的节点树"""
-            # 获取节点的文本属性
-            text = node.get('text', '')
-            content_description = node.get('content-desc', '')
-            resource_id = node.get('resource-id', '')
+        def class_matches(actual, expected):
+            actual = str(actual or "").strip()
+            expected = str(expected or "").strip()
+            if not actual or not expected:
+                return False
+            return actual == expected or actual.split(".")[-1] == expected.split(".")[-1]
 
-            # 检查各种文本属性
-            target_lower = target_text.strip().lower()
+        def resource_id_matches(actual, expected):
+            actual = str(actual or "").strip()
+            expected = str(expected or "").strip()
+            if not actual or not expected:
+                return False
+            if actual == expected:
+                return True
+            actual_tail = actual.rsplit("/", 1)[-1].rsplit(":id/", 1)[-1]
+            expected_tail = expected.rsplit("/", 1)[-1].rsplit(":id/", 1)[-1]
+            return actual_tail == expected_tail
 
-            # 优先级 1: 精确匹配 text 属性
-            if text and text.strip().lower() == target_lower:
-                bounds = parse_bounds(node.get('bounds', ''))
-                return {
-                    "text": text,
-                    "class": node.get('class', ''),
-                    "bounds": bounds,
-                    "resource_id": resource_id,
-                    "match_type": "exact"  # 标记为精确匹配
-                }
+        def node_texts(node):
+            values = []
+            for key in ("text", "content-desc", "resource-id"):
+                value = str(node.get(key, "") or "").strip()
+                if value:
+                    values.append(value)
+            return values
 
-            # 优先级 2: 精确匹配 content-description
-            if content_description and content_description.strip().lower() == target_lower:
-                bounds = parse_bounds(node.get('bounds', ''))
-                return {
-                    "text": content_description,
-                    "class": node.get('class', ''),
-                    "bounds": bounds,
-                    "resource_id": resource_id,
-                    "match_type": "exact"
-                }
-
-            # 递归搜索子节点
+        def descendant_texts(node):
+            values = []
             for child in node:
-                result = search_node(child)
+                values.extend(node_texts(child))
+                values.extend(descendant_texts(child))
+            return values
+
+        def make_result(node, match_type, score=0):
+            bounds = parse_bounds(node.get("bounds", ""))
+            if not bounds:
+                return None
+            text = node.get("text", "") or node.get("content-desc", "") or node.get("resource-id", "")
+            return {
+                "text": text,
+                "class": node.get("class", ""),
+                "bounds": bounds,
+                "resource_id": node.get("resource-id", ""),
+                "match_type": match_type,
+                "score": score,
+            }
+
+        def structured_match(node):
+            resource_id = str(node.get("resource-id", "") or "").strip()
+            text = str(node.get("text", "") or "").strip()
+            content_desc = str(node.get("content-desc", "") or "").strip()
+            klass = str(node.get("class", "") or "").strip()
+
+            score = 0
+            has_locator = any(target_spec.get(key) for key in ("resource_id", "text", "content_desc"))
+            if not has_locator:
+                return None
+
+            expected_id = target_spec.get("resource_id")
+            if expected_id:
+                if not resource_id_matches(resource_id, expected_id):
+                    return None
+                score += 10
+
+            expected_text = target_spec.get("text")
+            if expected_text:
+                if text == expected_text:
+                    score += 6
+                elif content_desc == expected_text:
+                    score += 5
+                else:
+                    descendant_values = descendant_texts(node)
+                    if expected_text in descendant_values:
+                        score += 4
+                    else:
+                        return None
+
+            expected_desc = target_spec.get("content_desc")
+            if expected_desc:
+                if content_desc == expected_desc:
+                    score += 6
+                elif text == expected_desc:
+                    score += 4
+                else:
+                    descendant_values = descendant_texts(node)
+                    if expected_desc in descendant_values:
+                        score += 4
+                    else:
+                        return None
+
+            expected_class = target_spec.get("class")
+            if expected_class and class_matches(klass, expected_class):
+                score += 2
+
+            return make_result(node, "structured", score)
+
+        def search_structured(root):
+            best = None
+
+            def visit(node):
+                nonlocal best
+                candidate = structured_match(node)
+                if candidate and (best is None or candidate.get("score", 0) > best.get("score", 0)):
+                    best = candidate
+                for child in node:
+                    visit(child)
+
+            visit(root)
+            return best
+
+        def search_exact(root):
+            target_lower = target_plain.lower()
+
+            def visit(node):
+                text = node.get("text", "")
+                content_description = node.get("content-desc", "")
+                resource_id = node.get("resource-id", "")
+                descendant_values = [value.lower() for value in descendant_texts(node)]
+
+                if text and text.strip().lower() == target_lower:
+                    return make_result(node, "exact")
+                if content_description and content_description.strip().lower() == target_lower:
+                    return make_result(node, "exact")
+                if resource_id and resource_id.strip().lower() == target_lower:
+                    return make_result(node, "resource_id_exact")
+                if resource_id and resource_id_matches(resource_id.lower(), target_lower):
+                    return make_result(node, "resource_id_exact")
+                if target_lower in descendant_values:
+                    return make_result(node, "descendant_text_exact")
+
+                for child in node:
+                    result = visit(child)
+                    if result:
+                        return result
+                return None
+
+            return visit(root)
+
+        def search_fallback(root):
+            target_lower = target_plain.lower()
+
+            def visit(node):
+                text = node.get("text", "")
+                content_description = node.get("content-desc", "")
+                resource_id = node.get("resource-id", "")
+                descendant_values = [value.lower() for value in descendant_texts(node)]
+
+                if text and target_lower in text.strip().lower():
+                    return make_result(node, "contains")
+                if content_description and target_lower in content_description.strip().lower():
+                    return make_result(node, "contains")
+                if resource_id:
+                    id_name = resource_id.lower()
+                    if target_lower in id_name or id_name in target_lower:
+                        return make_result(node, "resource_id")
+                for descendant_text in descendant_values:
+                    if target_lower in descendant_text or descendant_text in target_lower:
+                        return make_result(node, "descendant_text")
+
+                for child in node:
+                    result = visit(child)
+                    if result:
+                        return result
+                return None
+
+            return visit(root)
+
+        if target_spec:
+            for _, root in roots:
+                result = search_structured(root)
                 if result:
                     return result
-
             return None
 
-        def search_node_fallback(node):
-            """回退搜索：允许包含匹配"""
-            # 获取节点的文本属性
-            text = node.get('text', '')
-            content_description = node.get('content-desc', '')
-            resource_id = node.get('resource-id', '')
-
-            # 检查各种文本属性
-            target_lower = target_text.strip().lower()
-
-            # 优先级 1: 包含匹配 text 属性
-            if text and target_lower in text.strip().lower():
-                bounds = parse_bounds(node.get('bounds', ''))
-                return {
-                    "text": text,
-                    "class": node.get('class', ''),
-                    "bounds": bounds,
-                    "resource_id": resource_id,
-                    "match_type": "contains"  # 标记为包含匹配
-                }
-
-            # 优先级 2: 包含匹配 content-description
-            if content_description and target_lower in content_description.strip().lower():
-                bounds = parse_bounds(node.get('bounds', ''))
-                return {
-                    "text": content_description,
-                    "class": node.get('class', ''),
-                    "bounds": bounds,
-                    "resource_id": resource_id,
-                    "match_type": "contains"
-                }
-
-            # 优先级 3: 匹配 resource-id
-            if resource_id:
-                id_name = resource_id.lower()
-                if target_lower in id_name or id_name in target_lower:
-                    bounds = parse_bounds(node.get('bounds', ''))
-                    return {
-                        "text": text or resource_id,
-                        "class": node.get('class', ''),
-                        "bounds": bounds,
-                        "resource_id": resource_id,
-                        "match_type": "resource_id"
-                    }
-
-            # 递归搜索子节点
-            for child in node:
-                result = search_node_fallback(child)
-                if result:
-                    return result
-
+        if not target_plain:
             return None
 
-        # 先尝试精确匹配（包含匹配会跳过）
-        result = search_node(simplified_root)
+        for _, root in roots:
+            result = search_exact(root)
+            if result:
+                return result
+        for _, root in roots:
+            result = search_fallback(root)
+            if result:
+                return result
+        return None
 
-        # 如果精确匹配失败，再尝试包含匹配
-        if not result:
-            result = search_node_fallback(simplified_root)
-
-        return result
+    @staticmethod
+    def _parse_xml_bounds(bounds_str):
+        """Parse Android XML bounds: [left,top][right,bottom]."""
+        try:
+            import re
+            matches = re.findall(r'\[(\d+),(\d+)\]', bounds_str or "")
+            if len(matches) == 2:
+                left, top = int(matches[0][0]), int(matches[0][1])
+                right, bottom = int(matches[1][0]), int(matches[1][1])
+                return {"left": left, "top": top, "right": right, "bottom": bottom}
+        except Exception as e:
+            logging.debug(f"    Failed to parse bounds '{bounds_str}': {e}")
+        return None
 
     def _step_execute(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Execute action step."""
@@ -2933,6 +3421,9 @@ class TaskSchedulerVT:
 根据以上上下文信息，判断当前界面是否已经满足当前步骤的目标。
 - 如果已满足，输出：操作类型：done，决策理由：当前步骤已完成
 - 如果未满足，请根据当前界面状态，决定下一步操作（可能需要滑动查找、点击、或输入等）
+- 你必须输出“当前步骤是否完成：true/false”
+- 如果你点击的是弹窗、引导页、权限页或遮挡页上的跳过/关闭/允许等清障元素，当前步骤是否完成必须是 false
+- 如果你点击/输入/滑动后已经真正达成【当前步骤目标】，当前步骤是否完成才可以是 true
 
 请严格按照上述格式输出："""
 
@@ -2967,19 +3458,70 @@ class TaskSchedulerVT:
         Raises:
             ValueError: 如果无法找到有效的 JSON
         """
-        # 尝试提取 ```json ... ``` 格式
-        json_match = re.search(r'```json\s*(\{.*?\})\s*```', response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-            return json.loads(json_str)
+        import json
+        import re
 
-        # 尝试提取 { ... } 格式
-        json_match = re.search(r'(\{.*?\})', response_text, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-            return json.loads(json_str)
+        text = (response_text or "").strip()
+        if not text:
+            raise ValueError("无法在响应中找到有效的 JSON")
+
+        fenced = re.search(r"```json\s*(.*?)\s*```", text, re.DOTALL | re.IGNORECASE)
+        if fenced:
+            text = fenced.group(1).strip()
+        else:
+            generic_fence = re.search(r"```\s*(.*?)\s*```", text, re.DOTALL)
+            if generic_fence:
+                text = generic_fence.group(1).strip()
+
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+
+        start = text.find("{")
+        while start != -1:
+            depth = 0
+            in_string = False
+            escape = False
+            for idx in range(start, len(text)):
+                ch = text[idx]
+                if in_string:
+                    if escape:
+                        escape = False
+                    elif ch == "\\":
+                        escape = True
+                    elif ch == '"':
+                        in_string = False
+                    continue
+                if ch == '"':
+                    in_string = True
+                elif ch == "{":
+                    depth += 1
+                elif ch == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = text[start : idx + 1]
+                        try:
+                            return json.loads(candidate)
+                        except Exception:
+                            break
+            start = text.find("{", start + 1)
 
         raise ValueError("无法在响应中找到有效的 JSON")
+
+    def _extract_llm_response_text(self, response: Any) -> str:
+        """兼容 OpenAI SDK 对象、dict 响应和字符串响应。"""
+        if isinstance(response, str):
+            return response
+        if isinstance(response, dict):
+            try:
+                return response["choices"][0]["message"]["content"]
+            except Exception:
+                return json.dumps(response, ensure_ascii=False)
+        try:
+            return response.choices[0].message.content
+        except Exception:
+            return str(response)
 
     def _build_step_description(self, step: Dict[str, Any], step_index: int) -> str:
         """
@@ -3038,19 +3580,23 @@ class TaskSchedulerVT:
 目标元素：[按钮文字，仅对 click/input]
 输入内容：[输入文字，仅对 input]
 滑动方向：[up/down/left/right，仅对 swipe]
+当前步骤是否完成：[true/false]
 决策理由：[为什么这样操作]
 
 【示例】
 操作类型：click
 目标元素：返回
+当前步骤是否完成：true
 决策理由：点击返回按钮
 
 操作类型：input
 目标元素：默认文本: 搜索
 输入内容：周杰伦演唱会
+当前步骤是否完成：true
 决策理由：在搜索框输入关键词
 
 操作类型：done
+当前步骤是否完成：true
 决策理由：任务已完成"""
             },
             {
@@ -3063,6 +3609,7 @@ class TaskSchedulerVT:
                 "role": "assistant",
                 "content": """操作类型：click
 目标元素：返回
+当前步骤是否完成：true
 决策理由：点击返回按钮回到主页"""
             },
             {
@@ -3076,6 +3623,7 @@ class TaskSchedulerVT:
                 "content": """操作类型：input
 目标元素：默认文本: 搜索
 输入内容：周杰伦演唱会
+当前步骤是否完成：true
 决策理由：在搜索框输入关键词"""
             },
             {
@@ -3087,6 +3635,7 @@ class TaskSchedulerVT:
             {
                 "role": "assistant",
                 "content": """操作类型：done
+当前步骤是否完成：true
 决策理由：任务已完成"""
             },
             {
@@ -3112,16 +3661,9 @@ class TaskSchedulerVT:
                 return self._parse_key_value_format(response_clean)
 
             # 尝试解析 JSON 格式
-            if "```json" in response_clean:
-                start = response_clean.find("```json") + 7
-                end = response_clean.find("```", start)
-                json_str = response_clean[start:end].strip()
-                decision = json.loads(json_str)
-                return decision
-
-            elif response_clean.startswith("{"):
-                decision = json.loads(response_clean)
-                return decision
+            if "```json" in response_clean or response_clean.startswith("{") or "{" in response_clean:
+                decision = self._extract_json_from_response(response_clean)
+                return self._normalize_decision_fields(decision)
 
             # 回退到自然语言格式解析
             return self._parse_natural_language_response(response_clean)
@@ -3140,7 +3682,8 @@ class TaskSchedulerVT:
                 "action": "unknown",
                 "target": "",
                 "parameters": {},
-                "reasoning": ""
+                "reasoning": "",
+                "step_completed": None
             }
 
             lines = response.split('\n')
@@ -3151,7 +3694,8 @@ class TaskSchedulerVT:
                 "action": "unknown",
                 "target": "",
                 "parameters": {},
-                "reasoning": ""
+                "reasoning": "",
+                "step_completed": None
             }
 
             action_count = 0  # 统计操作数量
@@ -3197,6 +3741,18 @@ class TaskSchedulerVT:
                 elif line.startswith("滑动方向：") or line.startswith("滑动方向:"):
                     direction_value = line.split('：', 1)[-1].split(':', 1)[-1].strip().lower()
                     current_action["parameters"]["direction"] = direction_value
+
+                # 解析当前步骤是否完成
+                elif (
+                    line.startswith("当前步骤是否完成：")
+                    or line.startswith("当前步骤是否完成:")
+                    or line.startswith("是否完成当前步骤：")
+                    or line.startswith("是否完成当前步骤:")
+                    or line.startswith("step_completed:")
+                    or line.startswith("step_completed：")
+                ):
+                    bool_value = line.split('：', 1)[-1].split(':', 1)[-1].strip()
+                    current_action["step_completed"] = self._parse_bool_value(bool_value)
 
                 # 解析决策理由
                 elif line.startswith("决策理由：") or line.startswith("决策理由:"):
@@ -3291,7 +3847,8 @@ class TaskSchedulerVT:
                 "action": action,
                 "target": target,
                 "parameters": parameters,
-                "reasoning": reasoning if reasoning else response_clean[:200]
+                "reasoning": reasoning if reasoning else response_clean[:200],
+                "step_completed": None
             }
 
         except Exception as e:
@@ -3314,8 +3871,40 @@ class TaskSchedulerVT:
                 "action": action,
                 "target": "",
                 "parameters": {},
-                "reasoning": response[:200]
+                "reasoning": response[:200],
+                "step_completed": None
             }
+
+    def _normalize_decision_fields(self, decision: Dict[str, Any]) -> Dict[str, Any]:
+        """统一 JSON/键值对决策字段，兼容中文字段名。"""
+        if not isinstance(decision, dict):
+            return decision
+
+        if "step_completed" not in decision:
+            for key in ["当前步骤是否完成", "是否完成当前步骤", "completed", "is_completed"]:
+                if key in decision:
+                    decision["step_completed"] = self._parse_bool_value(decision.get(key))
+                    break
+        elif not isinstance(decision.get("step_completed"), bool):
+            decision["step_completed"] = self._parse_bool_value(decision.get("step_completed"))
+
+        decision.setdefault("parameters", {})
+        decision.setdefault("reasoning", "")
+        return decision
+
+    def _parse_bool_value(self, value: Any) -> Optional[bool]:
+        """解析模型输出中的 true/false 布尔值。无法识别时返回 None。"""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return None
+
+        value_str = str(value).strip().lower()
+        if value_str in {"true", "yes", "y", "1", "是", "完成", "已完成"}:
+            return True
+        if value_str in {"false", "no", "n", "0", "否", "未完成", "没有完成"}:
+            return False
+        return None
 
     def set_steps(self, steps: List[StepConfig]):
         """Customize the execution steps."""

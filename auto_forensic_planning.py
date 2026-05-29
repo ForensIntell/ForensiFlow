@@ -46,13 +46,19 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from runner.forensiflow.core import ForensicPlanner
+from runner.forensiflow.core.config import get_llm_config
 from runner.forensiflow.devices import extract_and_query_apps
 
 
 def load_text_from_file(file_path: str) -> str:
     """从文件加载文本内容"""
+    path = Path(file_path)
+    if not path.exists() and not path.is_absolute():
+        fallback = Path(__file__).parent / "examples" / path.name
+        if fallback.exists():
+            path = fallback
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             return f.read().strip()
     except Exception as e:
         logging.error(f"❌ 读取文件失败 {file_path}: {e}")
@@ -109,7 +115,19 @@ def save_plan_to_files(
 
             tasks = app_plan.get("tasks", [])
             for j, task in enumerate(tasks, 1):
-                lines.append(f"   {j}. {task}")
+                if isinstance(task, dict):
+                    desc = task.get('task_description', str(task))
+                    level = task.get('task_level', '')
+                    constraint = task.get('constraint', '')
+                    targets = task.get('target_objects', [])
+                    line = f"   {j}. [L{level}] {desc}"
+                    if targets:
+                        line += f" (对象: {', '.join(targets)})"
+                    if constraint:
+                        line += f" [约束: {constraint}]"
+                    lines.append(line)
+                else:
+                    lines.append(f"   {j}. {task}")
 
         # 统计信息
         total_apps = len(plan.get("forensic_plan", []))
@@ -151,7 +169,19 @@ def print_plan_summary(plan: dict):
 
         tasks = app_plan.get("tasks", [])
         for j, task in enumerate(tasks, 1):
-            print(f"   {j}. {task}")
+            if isinstance(task, dict):
+                desc = task.get('task_description', str(task))
+                level = task.get('task_level', '')
+                constraint = task.get('constraint', '')
+                targets = task.get('target_objects', [])
+                line = f"   {j}. [L{level}] {desc}"
+                if targets:
+                    line += f" (对象: {', '.join(targets)})"
+                if constraint:
+                    line += f" [约束: {constraint}]"
+                print(line)
+            else:
+                print(f"   {j}. {task}")
 
     total_apps = len(plan.get("forensic_plan", []))
     total_tasks = sum(len(app['tasks']) for app in plan.get("forensic_plan", []))
@@ -227,7 +257,12 @@ def main():
     parser.add_argument(
         "--device-id",
         type=str,
-        help="指定设备ID（多设备时使用）"
+        help="指定设备ID（多设备时使用，用于 adb -s 参数）"
+    )
+    parser.add_argument(
+        "--device-serial",
+        type=str,
+        help="设备序列号（用于按设备隔离数据目录，如 emulator-5554）"
     )
     parser.add_argument(
         "--third-party",
@@ -273,13 +308,13 @@ def main():
         "--api-key",
         type=str,
         default=None,  # 默认从环境变量读取
-        help="Qwen API密钥（默认从环境变量QWEN_API_KEY读取）"
+        help="LLM API密钥（默认从 FORENSIFLOW/MOMI/MIMO/LLM 配置读取，兼容 PAGE_AGENT_MOBILE 旧变量）"
     )
     parser.add_argument(
         "--model",
         type=str,
-        default="qwen3.5-27b",
-        help="使用的模型名称（默认: qwen3.5-27b）"
+        default=None,
+        help="使用的模型名称（默认读取 FORENSIFLOW/MOMI/MIMO/LLM 配置，兼容 PAGE_AGENT_MOBILE 旧变量）"
     )
     parser.add_argument(
         "--temperature",
@@ -292,8 +327,8 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="./data/forensic_plans",
-        help="输出目录（默认: ./data/forensic_plans）"
+        default=None,
+        help="输出目录（默认: 按设备隔离 data/devices/{serial}/plans/，未指定设备时用 data/forensic_plans/）"
     )
     parser.add_argument(
         "--output-format",
@@ -332,15 +367,10 @@ def main():
 
     # 检查API密钥（仅在非提取模式下验证）
     if not args.extract_only and not args.skip_app_extract:
-        # 尝试从环境变量读取API key
-        env_api_key = os.getenv("QWEN_API_KEY", "")
-
-        # 如果环境变量也没有，且命令行也没指定，才报错
-        if not args.api_key and not env_api_key:
-            print("❌ 错误: 需要提供 Qwen API 密钥")
-            print("   在.env文件中设置: QWEN_API_KEY=your-key")
-            print("   或设置环境变量: export QWEN_API_KEY='your-key'")
-            print("   或使用参数: --api-key your-key")
+        try:
+            get_llm_config(api_key=args.api_key, model=args.model)
+        except ValueError as exc:
+            print(str(exc))
             sys.exit(1)
 
     print("\n" + "=" * 80)
@@ -359,8 +389,13 @@ def main():
             "--delay", str(args.delay)
         ]
 
-        if args.device_id:
-            extract_cmd.extend(["--device", args.device_id])
+        # 设备参数：优先 device_serial，其次 device_id
+        effective_device = args.device_serial or args.device_id
+        if effective_device:
+            extract_cmd.extend(["--device", effective_device])
+            # 按设备隔离输出目录
+            app_info_dir = str(Path("./data") / "devices" / effective_device / "app_info")
+            extract_cmd.extend(["--output-dir", app_info_dir])
 
         import subprocess
         try:
@@ -405,16 +440,30 @@ def main():
     print("\n🤖 步骤 3/3: 生成取证任务规划")
     print("-" * 80)
 
-    # 初始化规划器（API key从环境变量读取，或使用参数指定的值）
-    planner_kwargs = {
-        "model": args.model,
-        "temperature": args.temperature,
-        "data_dir": "./data"
-    }
+    # 构建设备数据目录
+    device_serial = args.device_serial or args.device_id
+    if device_serial:
+        device_data_dir = str(Path("./data") / "devices" / device_serial)
+        Path(device_data_dir).mkdir(parents=True, exist_ok=True)
+    else:
+        device_data_dir = "./data"
 
-    # 如果通过参数指定了API key，则使用指定的值
-    if args.api_key:
-        planner_kwargs["api_key"] = args.api_key
+    # 如果没有手动指定 output_dir，自动按设备隔离
+    if args.output_dir is None:
+        if device_serial:
+            args.output_dir = str(Path(device_data_dir) / "plans")
+        else:
+            args.output_dir = "./data/forensic_plans"
+
+    # 初始化规划器（API key从环境变量读取，或使用参数指定的值）
+    llm_config = get_llm_config(api_key=args.api_key, model=args.model)
+    planner_kwargs = {
+        "api_key": llm_config.api_key,
+        "base_url": llm_config.api_base,
+        "model": llm_config.model,
+        "temperature": args.temperature,
+        "data_dir": device_data_dir
+    }
 
     planner = ForensicPlanner(**planner_kwargs)
 

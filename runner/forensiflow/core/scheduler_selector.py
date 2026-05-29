@@ -62,6 +62,7 @@ class SchedulerSelector:
         self,
         app_name: str,
         task_description: str,
+        package_name: str = "",
         top_k: int = 1
     ) -> SchedulerSelectionResult:
         """
@@ -82,6 +83,7 @@ class SchedulerSelector:
             matches = self.rag_matcher.search(
                 app=app_name,
                 task=task_description,
+                package_name=package_name,
                 top_k=top_k
             )
 
@@ -120,3 +122,16 @@ class SchedulerSelector:
                 similarity_score=0.0,
                 reason=f"RAG 检索异常，降级使用新调度器"
             )
+
+    def is_reusable_template(self, template: Optional[Dict[str, Any]]) -> bool:
+        if not template:
+            return False
+        try:
+            from tools.template_library import is_runnable_reuse_template
+            return is_runnable_reuse_template(template)
+        except Exception:
+            steps = template.get("steps")
+            if not isinstance(steps, list) or not steps:
+                return False
+            first = steps[0] if isinstance(steps[0], dict) else {}
+            return str(first.get("action") or "").lower() == "launch" and bool(template.get("package_name"))

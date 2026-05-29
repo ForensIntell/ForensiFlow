@@ -161,7 +161,7 @@ class SemanticMatcher:
         candidate_texts = [self._build_element_text(c) for c in valid_elements]
 
         # 3. 编码
-        target_emb = self.model.encode(target, convert_to_numpy=True)
+        target_emb = self.model.encode(target, convert_to_numpy=True, show_progress_bar=False)
         candidate_embs = self._get_cached_encodings(candidate_texts)
 
         # 4. 计算相似度
@@ -263,7 +263,7 @@ class SemanticMatcher:
 
         # 编码
         logger.debug(f"🔄 编码 {len(texts)} 个候选元素")
-        encodings = self.model.encode(texts, convert_to_numpy=True)
+        encodings = self.model.encode(texts, convert_to_numpy=True, show_progress_bar=False)
 
         # 缓存
         self._cache[screen_hash] = encodings

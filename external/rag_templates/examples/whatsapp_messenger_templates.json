@@ -1,0 +1,97 @@
+[
+  {
+    "app": "WhatsApp Messenger",
+    "package_name": "",
+    "task": "全局联系人列表界面遍历抓取",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.whatsapp",
+        "app_name": "WhatsApp Messenger"
+      },
+      {
+        "action": "Wait"
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp Messenger",
+    "package_name": "",
+    "task": "消息/会话总列表界面全量提取",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.whatsapp",
+        "app_name": "WhatsApp Messenger"
+      },
+      {
+        "action": "Wait"
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp Messenger",
+    "package_name": "",
+    "task": "账户设置/个人主页界面全量信息提取",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.whatsapp",
+        "app_name": "WhatsApp Messenger"
+      },
+      {
+        "action": "Click",
+        "target": "更多选项 #menuitem_overflow"
+      },
+      {
+        "action": "Click",
+        "target": "设置 #title"
+      },
+      {
+        "action": "Click",
+        "target": "返回 #whatsapp_toolbar_home"
+      },
+      {
+        "action": "Click",
+        "target": "更多选项 #menuitem_overflow"
+      },
+      {
+        "action": "Click",
+        "target": "设置 #title"
+      },
+      {
+        "action": "Click",
+        "target": "#profile_info"
+      },
+      {
+        "action": "Click",
+        "target": "返回"
+      },
+      {
+        "action": "Click",
+        "target": "账户 #row_text"
+      },
+      {
+        "action": "Wait"
+      }
+    ]
+  }
+]

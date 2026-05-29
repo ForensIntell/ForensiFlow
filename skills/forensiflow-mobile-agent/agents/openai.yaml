@@ -1,0 +1,4 @@
+interface:
+  display_name: "ForensiFlow Mobile Agent"
+  short_description: "Mobile forensic extraction workflows"
+  default_prompt: "Use $forensiflow-mobile-agent to automatically complete the Android forensic extraction workflow end to end, including exploration, script generation or repair, script execution, and records validation."

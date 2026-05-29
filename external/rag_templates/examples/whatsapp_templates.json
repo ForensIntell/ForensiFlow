@@ -1,0 +1,776 @@
+[
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "全局联系人列表界面遍历抓取",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.whatsapp",
+        "app_name": "WhatsApp Messenger"
+      },
+      {
+        "action": "Click",
+        "target": "新聊天 #fab"
+      },
+      {
+        "action": "Wait"
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "消息/会话总列表界面全量提取",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.whatsapp",
+        "app_name": "WhatsApp Messenger"
+      },
+      {
+        "action": "Wait"
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "账户设置/个人主页界面全量信息提取",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.whatsapp",
+        "app_name": "WhatsApp Messenger"
+      },
+      {
+        "action": "Click",
+        "target": "更多选项 #menuitem_overflow"
+      },
+      {
+        "action": "Click",
+        "target": "设置 #title"
+      },
+      {
+        "action": "Click",
+        "target": "账户,安全通知、更改号码 #settings_account_info"
+      },
+      {
+        "action": "Wait"
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "com.whatsapp",
+    "task": "提取所有通话记录",
+    "constraint": "",
+    "template_type": "full_extraction",
+    "template_build_method": "llm_distilled",
+    "template_confidence": 0.9,
+    "runnable_reuse_template": false,
+    "script_generation_success": true,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.whatsapp",
+        "app_name": "WhatsApp"
+      },
+      {
+        "action": "Click",
+        "target": "通话"
+      },
+      {
+        "action": "CallScript",
+        "target": "动态脚本:WhatsApp:提取所有通话记录",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ],
+    "script_generation": {
+      "script_name": "动态脚本:WhatsApp:提取所有通话记录",
+      "registry": "runner/forensiflow/scripts/generated/registry.json"
+    }
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "com.whatsapp",
+    "task": "通话记录界面遍历抓取",
+    "constraint": "",
+    "template_type": "full_extraction",
+    "template_build_method": "llm_distilled",
+    "template_confidence": 1.0,
+    "runnable_reuse_template": false,
+    "script_generation_success": true,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.whatsapp",
+        "app_name": "WhatsApp Messenger"
+      },
+      {
+        "action": "Click",
+        "target": "通话"
+      },
+      {
+        "action": "CallScript",
+        "target": "动态脚本:WhatsApp Messenger:通话记录界面遍历抓取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ],
+    "script_generation": {
+      "script_name": "动态脚本:WhatsApp Messenger:通话记录界面遍历抓取",
+      "registry": "runner/forensiflow/scripts/generated/registry.json"
+    }
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp当前账号的身份信息",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更多、溢出菜单、省略号"
+      },
+      {
+        "action": "Click",
+        "target": "设置"
+      },
+      {
+        "action": "Click",
+        "target": "半身人像、头像、我的主页、联系人"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用当前账号的身份信息脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp的隐私和安全设置状态",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更多、溢出菜单、省略号"
+      },
+      {
+        "action": "Click",
+        "target": "设置"
+      },
+      {
+        "action": "Click",
+        "target": "隐私"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用隐私和安全设置状态脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp云端备份配置和状态",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更多、溢出菜单、省略号"
+      },
+      {
+        "action": "Click",
+        "target": "设置"
+      },
+      {
+        "action": "Click",
+        "target": "聊天"
+      },
+      {
+        "action": "Click",
+        "target": "聊天备份"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用云端备份配置和状态脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp已关联的设备和活跃状态",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更多、溢出菜单、省略号"
+      },
+      {
+        "action": "Click",
+        "target": "已关联设备"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用已关联的设备和活跃状态脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp中所有的通话记录列表及详情",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "通话"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用所有的通话记录列表及详情脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp所有联系人列表信息",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "图片，或加号"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用联系人列表脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp所有联系人聊天记录",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "聊天"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用所有联系人聊天记录脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp中与特定联系人的完整聊天记录",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "聊天"
+      },
+      {
+        "action": "Click",
+        "target": "目标联系人或群组"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用与特定联系人的完整聊天记录脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp与特定联系人聊天中的媒体、链接和文档清单",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "聊天"
+      },
+      {
+        "action": "Click",
+        "target": "目标联系人或群组"
+      },
+      {
+        "action": "Click",
+        "target": "更多、溢出菜单、省略号"
+      },
+      {
+        "action": "Click",
+        "target": "影音内容、链接及文档"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用与特定联系人聊天中的媒体、链接和文档清单脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp特定联系人的详细信息",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "聊天"
+      },
+      {
+        "action": "Click",
+        "target": "消息/信息图标、或搜索图标"
+      },
+      {
+        "action": "Click",
+        "target": "半身人像、头像、我的主页、联系人"
+      },
+      {
+        "action": "Click",
+        "target": "感叹号、错误、提示、隐私"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用特定联系人的详细信息脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp中所有收藏的消息",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更多、溢出菜单、省略号"
+      },
+      {
+        "action": "Click",
+        "target": "已加星标"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用所有收藏的消息脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp中归档的聊天列表及记录",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "聊天"
+      },
+      {
+        "action": "Click",
+        "target": "已归档"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用归档的聊天列表及记录脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp所有群组的信息和聊天记录",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用所有群组的信息和聊天记录脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp特定群组的信息和聊天记录",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "目标群组聊天界面"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用特定群组的信息和聊天记录脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp社群(Communities)架构及子群组",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "社群"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用社群(Communities)架构及子群组脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp关注的频道及记录",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更新"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用关注的频道及记录脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp动态隐私设置",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更新"
+      },
+      {
+        "action": "Click",
+        "target": "更多、溢出菜单、省略号"
+      },
+      {
+        "action": "Click",
+        "target": "动态隐私"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用动态隐私设置脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp用户发布的动态信息",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更新"
+      },
+      {
+        "action": "Click",
+        "target": "我的动态"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用用户发布的动态信息脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  },
+  {
+    "app": "WhatsApp",
+    "package_name": "",
+    "task": "提取WhatsApp已封锁的联系人名单(黑名单)",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "WhatsApp应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "更多、溢出菜单、省略号"
+      },
+      {
+        "action": "Click",
+        "target": "设置"
+      },
+      {
+        "action": "Click",
+        "target": "隐私"
+      },
+      {
+        "action": "Scroll",
+        "direction": "Down",
+        "note": "滑到底部"
+      },
+      {
+        "action": "Click",
+        "target": "联系人"
+      },
+      {
+        "action": "Click",
+        "target": "封锁的联系人"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用已封锁的联系人名单(黑名单)脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  }
+]
