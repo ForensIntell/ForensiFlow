@@ -150,9 +150,9 @@ def main():
 
     print(f"✅ 共 {len(packages)} 个应用待查询")
 
-    # 初始化查询器
+    # 初始化查询器（缓存使用共享目录，output-dir 只影响输出文件）
     fetcher = AppInfoFetcher(
-        cache_dir=f"{args.output_dir}/cache",
+        cache_dir="./data/app_info_cache",
         cache_expiry_hours=24
     )
 

@@ -1,5 +1,11 @@
 # ========== 环境变量 ==========
 .env
+.env.*
+!.env.template
+.profile
+.codex
+.codex/
+.codex-forensiflow-agent/
 
 # ========== Python 缓存 ==========
 __pycache__/
@@ -23,9 +29,8 @@ ENV/
 
 # ========== 数据和运行结果 ==========
 data/
-*.jpg
-*.png
-*.jpeg
+artifacts/
+experiments/
 *.log
 *.xml
 
@@ -34,15 +39,22 @@ forensiflow_*.json
 forensiflow_screenshots/
 forensiflow_xml_dumps/
 xml_dumps/
-whatsapp_*.json
-wechat_*.json
+/whatsapp_*.json
+/wechat_*.json
+forensiflow_universal_raw_data.json
 
 # ========== 模型文件（太大，不提交） ==========
 external/ForensiVision/pt_model/
+external/models/
+!external/ForensiVision/pt_model/
+!external/ForensiVision/pt_model/README.md
+!external/models/
+!external/models/README.md
 *.pt
 *.pth
 *.onnx
 *.bin
+*.safetensors
 
 # ========== ForensiVision 中间结果 ==========
 external/ForensiVision/core_gpt4v/
@@ -54,9 +66,25 @@ external/ForensiVision/test_*.py
 # ========== 备份文件 ==========
 backup_old_files/
 old/
+archive/
+snap/
 *.bak
 *.backup
 *.backup.*
+
+# ========== 第三方嵌套仓库 / 本地 vendor ==========
+external/codex/
+external/smolagents/
+opencode/
+
+# ========== 前端构建产物 ==========
+forensiflow-web/node_modules/
+forensiflow-web/dist/
+
+# ========== 运行时生成脚本 ==========
+runner/forensiflow/scripts/generated/*
+!runner/forensiflow/scripts/generated/README.md
+!runner/forensiflow/scripts/generated/registry.json
 
 # ========== 系统文件 ==========
 .DS_Store
@@ -68,20 +96,20 @@ memory/
 
 # ========== 根目录无用脚本（调试/临时/旧版） ==========
 README2.md
-debug_*.py
-fix_*.py
-quick_test_*.py
-verify_*.py
-setting.py
-run_project.py
-run_all_tasks.py
-api_services_qwen.py
-lastvision.py
-template_manager.py
-xml_dumper.py
-xml_simple.py
-goals.txt
-case.txt
+/debug_*.py
+/fix_*.py
+/quick_test_*.py
+/verify_*.py
+/setting.py
+/run_project.py
+/run_all_tasks.py
+/api_services_qwen.py
+/lastvision.py
+/template_manager.py
+/xml_dumper.py
+/xml_simple.py
+/goals.txt
+/case.txt
 README2.md
 
 # ========== 旧版测试脚本 ==========
@@ -95,13 +123,13 @@ test_bge_load.py
 test_semantic_matcher.py
 
 # ========== 旧版脚本 ==========
-qwen*.py
-message*.py
-browse_contacts.py
-qwentest.py
-qwenapitest.py
-whatsapp_Communicate.py
-whatsapp_informaition.py
+/qwen*.py
+/message*.py
+/browse_contacts.py
+/qwentest.py
+/qwenapitest.py
+/whatsapp_Communicate.py
+/whatsapp_informaition.py
 
 # ========== 过程性报告文档（开发记录） ==========
 CODE_REFACTORING_REPORT.md

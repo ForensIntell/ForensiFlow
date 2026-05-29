@@ -1,0 +1,66 @@
+[
+  {
+    "app": "Gmail",
+    "package_name": "com.google.android.gm",
+    "task": "Gmail 收件箱邮件/会话总列表全量提取",
+    "constraint": "",
+    "template_type": "full_extraction",
+    "template_build_method": "action_path",
+    "template_confidence": 0.85,
+    "runnable_reuse_template": false,
+    "script_generation_success": true,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.google.android.gm",
+        "app_name": "Gmail"
+      },
+      {
+        "action": "CallScript",
+        "target": "动态脚本:Gmail:Gmail收件箱邮件会话总列表全量提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ],
+    "script_generation": {
+      "script_name": "动态脚本:Gmail:Gmail收件箱邮件会话总列表全量提取",
+      "registry": "runner/forensiflow/scripts/generated/registry.json"
+    }
+  },
+  {
+    "app": "Gmail",
+    "package_name": "com.google.android.gm",
+    "task": "Gmail 收件箱列表闭环测试提取",
+    "constraint": "",
+    "template_type": "full_extraction",
+    "template_build_method": "action_path",
+    "template_confidence": 0.85,
+    "runnable_reuse_template": false,
+    "script_generation_success": true,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.google.android.gm",
+        "app_name": "Gmail"
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 3.0
+        }
+      },
+      {
+        "action": "CallScript",
+        "target": "动态脚本:Gmail:Gmail收件箱列表闭环测试提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ],
+    "script_generation": {
+      "script_name": "动态脚本:Gmail:Gmail收件箱列表闭环测试提取",
+      "registry": "runner/forensiflow/scripts/generated/registry.json"
+    }
+  }
+]

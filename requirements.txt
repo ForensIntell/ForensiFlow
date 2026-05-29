@@ -1,4 +1,4 @@
-# MobiAgent 项目依赖
+# ForensiFlow 项目依赖
 # Python 3.8+ 推荐
 
 # ========== 深度学习框架 ==========
@@ -24,6 +24,11 @@ matplotlib==3.7.4
 # ========== LLM API 客户端 ==========
 openai==2.2.0
 python-dotenv==1.0.1
+httpx[socks]
+
+# ========== 语义检索与应用信息 ==========
+sentence-transformers
+google-play-scraper
 
 # ========== API 服务（可选，用于本地 API 服务） ==========
 fastapi==0.124.4

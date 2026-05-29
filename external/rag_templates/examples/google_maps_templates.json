@@ -1,0 +1,205 @@
+[
+  {
+    "app": "Google Maps",
+    "package_name": "com.google.android.apps.maps",
+    "task": "抽取最近搜索或最近查看地点",
+    "constraint": "只读取现有最近搜索、最近查看地点和地点详情，不输入新搜索词，不修改收藏或路线。",
+    "template_type": "full_extraction",
+    "template_build_method": "action_path",
+    "template_confidence": 0.85,
+    "runnable_reuse_template": false,
+    "script_generation_success": true,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.google.android.apps.maps",
+        "app_name": "Google Maps"
+      },
+      {
+        "action": "Click",
+        "target": "search_omnibox_text_box"
+      },
+      {
+        "action": "CallScript",
+        "target": "动态脚本:Google Maps:抽取最近搜索或最近查看地点_39085606",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ],
+    "script_generation": {
+      "script_name": "动态脚本:Google Maps:抽取最近搜索或最近查看地点_39085606",
+      "registry": "runner/forensiflow/scripts/generated/registry.json"
+    }
+  },
+  {
+    "app": "Google Maps",
+    "package_name": "com.google.android.apps.maps",
+    "task": "抽取 Google Maps 最近搜索或最近查看地点",
+    "constraint": "只读取已有最近搜索、最近查看地点和地点摘要，不输入新搜索词，不点击路线、保存、分享或菜单。",
+    "template_type": "full_extraction",
+    "template_build_method": "action_path_stabilized",
+    "template_confidence": 0.9,
+    "runnable_reuse_template": false,
+    "script_generation_success": true,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.google.android.apps.maps",
+        "app_name": "Google Maps"
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 4.0
+        }
+      },
+      {
+        "action": "Click",
+        "target": {
+          "resource_id": "com.google.android.apps.maps:id/saved_tab_strip_button",
+          "text": "我",
+          "content_desc": "我"
+        }
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 2.0
+        }
+      },
+      {
+        "action": "Click",
+        "target": {
+          "text": "地图历史记录"
+        }
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 1.5
+        }
+      },
+      {
+        "action": "Click",
+        "target": {
+          "text": "搜索过"
+        }
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 1.5
+        }
+      },
+      {
+        "action": "Click",
+        "target": {
+          "text": "应用"
+        }
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 2.0
+        }
+      },
+      {
+        "action": "CallScript",
+        "target": "动态脚本:Google Maps:抽取GoogleMaps最近搜索或最近查看地点_ed9d3be3",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ],
+    "script_generation": {
+      "script_name": "动态脚本:Google Maps:抽取GoogleMaps最近搜索或最近查看地点_ed9d3be3",
+      "registry": "runner/forensiflow/scripts/generated/registry.json"
+    }
+  },
+  {
+    "app": "Google Maps",
+    "package_name": "com.google.android.apps.maps",
+    "task": "抽取 Google Maps Saved 中的地点列表和第一个可见地点详情",
+    "constraint": "只读取 Saved 地点列表和只读地点详情，不点击路线、预订、保存切换、分享、菜单或搜索输入。",
+    "template_type": "full_extraction",
+    "template_build_method": "action_path_stabilized",
+    "template_confidence": 0.9,
+    "runnable_reuse_template": false,
+    "script_generation_success": true,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.google.android.apps.maps",
+        "app_name": "Google Maps"
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 4.0
+        }
+      },
+      {
+        "action": "Click",
+        "target": {
+          "resource_id": "com.google.android.apps.maps:id/saved_tab_strip_button",
+          "text": "我",
+          "content_desc": "我"
+        }
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 2.0
+        }
+      },
+      {
+        "action": "Click",
+        "target": {
+          "text": "已保存"
+        }
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 1.5
+        }
+      },
+      {
+        "action": "Click",
+        "target": {
+          "text": "全部"
+        }
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 1.0
+        }
+      },
+      {
+        "action": "Click",
+        "target": {
+          "text": "应用"
+        }
+      },
+      {
+        "action": "Wait",
+        "params": {
+          "duration": 2.0
+        }
+      },
+      {
+        "action": "CallScript",
+        "target": "动态脚本:Google Maps:抽取GoogleMapsSaved中的地点列表和第一个可见地点详情_40319043",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ],
+    "script_generation": {
+      "script_name": "动态脚本:Google Maps:抽取GoogleMapsSaved中的地点列表和第一个可见地点详情_40319043",
+      "registry": "runner/forensiflow/scripts/generated/registry.json"
+    }
+  }
+]

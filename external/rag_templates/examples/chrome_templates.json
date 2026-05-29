@@ -1,0 +1,71 @@
+[
+  {
+    "app": "Chrome",
+    "package_name": "com.android.chrome",
+    "task": "抽取 Chrome 最近历史记录",
+    "constraint": "",
+    "template_type": "full_extraction",
+    "template_build_method": "llm_distilled",
+    "template_confidence": 0.9,
+    "runnable_reuse_template": false,
+    "script_generation_success": true,
+    "steps": [
+      {
+        "action": "Launch",
+        "package_name": "com.android.chrome",
+        "app_name": "Chrome"
+      },
+      {
+        "action": "Click",
+        "target": "menu_button"
+      },
+      {
+        "action": "Click",
+        "target": "open_history_menu_id"
+      },
+      {
+        "action": "CallScript",
+        "target": "动态脚本:Chrome:抽取Chrome最近历史记录_ce7c2845",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ],
+    "script_generation": {
+      "script_name": "动态脚本:Chrome:抽取Chrome最近历史记录_ce7c2845",
+      "registry": "runner/forensiflow/scripts/generated/registry.json"
+    }
+  },
+  {
+    "app": "Chrome",
+    "package_name": "",
+    "task": "提取Chrome浏览器的历史记录",
+    "constraint": "",
+    "template_type": "workflow_example",
+    "template_build_method": "public_sanitized_example",
+    "template_confidence": "",
+    "runnable_reuse_template": false,
+    "script_generation_success": false,
+    "steps": [
+      {
+        "action": "Click",
+        "target": "Chrome浏览器应用图标"
+      },
+      {
+        "action": "Click",
+        "target": "向上箭头/隐藏、展开键"
+      },
+      {
+        "action": "Click",
+        "target": "历史记录"
+      },
+      {
+        "action": "CallScript",
+        "target": "调用Chrome浏览器历史记录脚本提取",
+        "params": {
+          "registry": "runner/forensiflow/scripts/generated/registry.json"
+        }
+      }
+    ]
+  }
+]

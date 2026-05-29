@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-MobiAgent 端到端执行脚本
+ForensiFlow 端到端执行脚本
 
 功能：
 1. 以取证规划层为入口，接收 case 和 goals 输入
@@ -49,13 +49,25 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent))
 
 from runner.forensiflow.core.forensic_planner import ForensicPlanner
+from runner.forensiflow.core.logging_utils import configure_logging, demo_log_enabled
+from runner.forensiflow.core.config import get_llm_config
 from runner.forensiflow.devices.android import AndroidDevice
+from tools.device_serial import resolve_device_serial
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+configure_logging()
 logger = logging.getLogger(__name__)
+
+
+def _read_input_text_file(file_path: str) -> str:
+    """Read user-provided case/goals file, with examples/ fallback for old commands."""
+    path = Path(file_path)
+    if not path.exists() and not path.is_absolute():
+        fallback = Path(__file__).parent / "examples" / path.name
+        if fallback.exists():
+            logger.info("输入文件 %s 不存在，改用示例文件: %s", file_path, fallback)
+            path = fallback
+    with open(path, 'r', encoding='utf-8') as f:
+        return f.read().strip()
 
 
 class EndToEndExecutor:
@@ -65,7 +77,8 @@ class EndToEndExecutor:
         self,
         device,
         api_key: str,
-        model: str = "qwen3.5-27b",
+        model: str = None,
+        api_base: str = None,
         data_dir: str = "./data",
         threshold: float = 0.75,
         device_serial: str = None
@@ -75,18 +88,24 @@ class EndToEndExecutor:
 
         Args:
             device: Android 设备对象
-            api_key: Qwen API 密钥
+            api_key: LLM API 密钥
             model: LLM 模型名称
+            api_base: LLM API endpoint
             data_dir: 数据目录
             threshold: 调度器选择阈值
             device_serial: 设备序列号（用于应用提取）
         """
+        llm_config = get_llm_config(api_key=api_key, api_base=api_base, model=model)
         self.device = device
-        self.api_key = api_key
-        self.model = model
-        self.data_dir = data_dir
+        self.api_key = llm_config.api_key
+        self.api_base = llm_config.api_base
+        self.model = llm_config.model
         self.threshold = threshold
-        self.device_serial = device_serial
+        self.device_serial = device_serial or getattr(device, 'device_serial', 'unknown_device')
+
+        # 按设备序列号隔离数据目录
+        self.data_dir = str(Path(data_dir) / "devices" / self.device_serial)
+        Path(self.data_dir).mkdir(parents=True, exist_ok=True)
 
     def _extract_apps(self):
         """步骤 1a：提取设备应用信息（ADB + Google Play）"""
@@ -94,18 +113,29 @@ class EndToEndExecutor:
         logger.info("📱 步骤 1/3：提取设备应用信息")
         logger.info("="*80)
 
+        app_info_dir = str(Path(self.data_dir) / "app_info")
+
         extract_cmd = [
             sys.executable,
             str(Path(__file__).parent / "runner" / "forensiflow" / "devices" / "extract_and_query_apps.py"),
             "--third-party",
-            "--delay", "1.5"
+            "--delay", "1.5",
+            "--output-dir", app_info_dir
         ]
 
         if self.device_serial:
             extract_cmd.extend(["--device", self.device_serial])
 
         try:
-            result = subprocess.run(extract_cmd, capture_output=False)
+            if demo_log_enabled():
+                result = subprocess.run(
+                    extract_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+            else:
+                result = subprocess.run(extract_cmd, capture_output=False)
             if result.returncode != 0:
                 logger.warning("⚠️ 应用提取失败，继续使用现有数据...")
         except Exception as e:
@@ -123,6 +153,7 @@ class EndToEndExecutor:
 
         planner = ForensicPlanner(
             api_key=self.api_key,
+            base_url=self.api_base,
             model=self.model,
             data_dir=self.data_dir
         )
@@ -132,10 +163,10 @@ class EndToEndExecutor:
             forensic_goals=forensic_goals
         )
 
-        # 保存规划
+        # 保存规划到设备专属 plans/ 目录
         import datetime
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_dir = Path(self.data_dir) / "forensic_plans"
+        output_dir = Path(self.data_dir) / "plans"
         output_dir.mkdir(parents=True, exist_ok=True)
 
         plan_file = output_dir / f"forensic_plan_{timestamp}.json"
@@ -154,7 +185,11 @@ class EndToEndExecutor:
         self,
         plan_file: str,
         specific_app: str = None,
-        specific_task_index: Optional[int] = None
+        specific_task_index: Optional[int] = None,
+        *,
+        max_apps: Optional[int] = None,
+        max_tasks_per_app: Optional[int] = None,
+        selection_only: bool = False,
     ):
         """步骤 2：执行取证任务规划"""
         logger.info("")
@@ -167,14 +202,19 @@ class EndToEndExecutor:
         executor = ForensicTaskExecutor(
             device=self.device,
             api_key=self.api_key,
+            api_base=self.api_base,
             model=self.model,
-            threshold=self.threshold
+            threshold=self.threshold,
+            data_dir=self.data_dir
         )
 
         summary = executor.execute_plan(
             plan_file=plan_file,
             specific_app=specific_app,
-            specific_task_index=specific_task_index
+            specific_task_index=specific_task_index,
+            max_apps=max_apps,
+            max_tasks_per_app=max_tasks_per_app,
+            selection_only=selection_only,
         )
 
         logger.info("")
@@ -188,18 +228,47 @@ class EndToEndExecutor:
 
         return summary
 
+    def _save_device_info(self):
+        """保存设备元信息"""
+        info_path = Path(self.data_dir) / "device_info.json"
+
+        # 如果已存在则跳过（设备信息不变）
+        if info_path.exists():
+            logger.info(f"📋 设备信息已存在: {info_path}")
+            return
+
+        try:
+            device_info = self.device.get_device_info()
+            with open(info_path, 'w', encoding='utf-8') as f:
+                json.dump(device_info, f, ensure_ascii=False, indent=2)
+            logger.info(f"📋 设备信息已保存: {info_path}")
+            logger.info(f"   序列号: {device_info.get('serial', 'N/A')}")
+            logger.info(f"   型号: {device_info.get('model', 'N/A')}")
+            logger.info(f"   Android: {device_info.get('android_version', 'N/A')}")
+        except Exception as e:
+            logger.warning(f"⚠️ 保存设备信息失败: {e}")
+
     def run_end_to_end(
         self,
         case_background: str = "",
         forensic_goals: str = "",
         specific_app: str = None,
-        specific_task_index: Optional[int] = None
+        specific_task_index: Optional[int] = None,
+        *,
+        max_apps: Optional[int] = None,
+        max_tasks_per_app: Optional[int] = None,
+        selection_only: bool = False,
+        skip_app_extract: bool = False,
     ):
         """端到端执行：提取应用 → 生成规划 → 执行规划"""
         logger.info("="*80)
-        logger.info("🎯 MobiAgent 端到端取证执行")
+        logger.info("🎯 ForensiFlow 端到端取证执行")
+        logger.info(f"📁 设备数据目录: {self.data_dir}")
         logger.info("="*80)
         logger.info("")
+
+        # 保存设备元信息
+        self._save_device_info()
 
         # 默认值
         if not case_background:
@@ -208,7 +277,10 @@ class EndToEndExecutor:
             forensic_goals = "提取设备上所有应用的相关数据，包括联系人列表、聊天记录、账户信息等"
 
         # 步骤 1/3：提取应用信息
-        self._extract_apps()
+        if skip_app_extract:
+            logger.info("⏭️  跳过应用提取，使用现有应用映射/缓存")
+        else:
+            self._extract_apps()
 
         # 步骤 2/3：生成规划
         plan_file = self._generate_plan(case_background, forensic_goals)
@@ -217,7 +289,10 @@ class EndToEndExecutor:
         summary = self.run_forensic_plan(
             plan_file=plan_file,
             specific_app=specific_app,
-            specific_task_index=specific_task_index
+            specific_task_index=specific_task_index,
+            max_apps=max_apps,
+            max_tasks_per_app=max_tasks_per_app,
+            selection_only=selection_only,
         )
 
         logger.info("")
@@ -232,7 +307,7 @@ class EndToEndExecutor:
 def main():
     """主函数"""
     parser = argparse.ArgumentParser(
-        description="MobiAgent 端到端执行脚本",
+        description="ForensiFlow 端到端执行脚本",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例用法：
@@ -255,7 +330,7 @@ def main():
   python run_end_to_end.py --device-serial emulator-5554
 
   # 指定模型
-  python run_end_to_end.py --model qwen3.5-27b
+  python run_end_to_end.py --model your-model-name
         """
     )
 
@@ -311,8 +386,8 @@ def main():
     parser.add_argument(
         "--model",
         type=str,
-        default="qwen3.5-27b",
-        help="LLM 模型名称（默认：qwen3.5-27b）"
+        default=None,
+        help="LLM 模型名称（默认读取 FORENSIFLOW/MOMI/MIMO/LLM 配置，兼容 PAGE_AGENT_MOBILE 旧变量）"
     )
 
     parser.add_argument(
@@ -321,28 +396,52 @@ def main():
         default=0.75,
         help="调度器选择阈值（默认：0.75）"
     )
+    parser.add_argument(
+        "--selection-only",
+        action="store_true",
+        help="只跑规划和路由选择，不真正执行手机任务。"
+    )
+    parser.add_argument(
+        "--max-apps",
+        type=int,
+        default=None,
+        help="限制本次最多处理多少个应用。"
+    )
+    parser.add_argument(
+        "--max-tasks-per-app",
+        type=int,
+        default=None,
+        help="限制每个应用最多处理多少个任务。"
+    )
+    parser.add_argument(
+        "--skip-app-extract",
+        action="store_true",
+        help="跳过设备应用重新提取，使用已有应用映射/缓存。"
+    )
 
     args = parser.parse_args()
 
     # 从文件读取 case 和 goals
     if args.case_file:
-        with open(args.case_file, 'r', encoding='utf-8') as f:
-            args.case = f.read().strip()
+        args.case = _read_input_text_file(args.case_file)
     if args.goals_file:
-        with open(args.goals_file, 'r', encoding='utf-8') as f:
-            args.goals = f.read().strip()
+        args.goals = _read_input_text_file(args.goals_file)
 
-    # 检查 API 密钥
-    api_key = os.getenv("QWEN_API_KEY")
-    if not api_key:
-        logger.error("❌ 未找到 QWEN_API_KEY 环境变量")
-        logger.error("   请在 .env 文件中设置: QWEN_API_KEY=your-key")
+    # 检查并统一 LLM 配置。优先使用 FORENSIFLOW/MOMI/MIMO/LLM，兼容 PAGE_AGENT_MOBILE/QWEN/YUNWU 旧名称。
+    try:
+        llm_config = get_llm_config(model=args.model)
+    except ValueError as exc:
+        logger.error(str(exc))
         sys.exit(1)
 
     # 初始化设备
     logger.info("🔧 初始化设备...")
-    device = AndroidDevice(adb_endpoint=args.device_serial)
-    logger.info("✓ 设备已连接\n")
+    resolved_serial = resolve_device_serial(args.device_serial or "", required=True)
+    device = AndroidDevice(adb_endpoint=resolved_serial)
+    logger.info(f"✓ 设备已连接 (序列号: {device.device_serial})\n")
+
+    # 构建设备数据目录
+    device_data_dir = str(Path("./data") / "devices" / device.device_serial)
 
     try:
         # 如果提供了规划文件，直接执行
@@ -350,36 +449,47 @@ def main():
             from run_forensic_plan import ForensicTaskExecutor
 
             logger.info(f"📄 使用已有规划文件: {args.plan}")
+            logger.info(f"📁 设备数据目录: {device_data_dir}")
             logger.info("")
 
             executor = ForensicTaskExecutor(
                 device=device,
-                api_key=api_key,
-                model=args.model,
-                threshold=args.threshold
+                api_key=llm_config.api_key,
+                api_base=llm_config.api_base,
+                model=llm_config.model,
+                threshold=args.threshold,
+                data_dir=device_data_dir
             )
 
             summary = executor.execute_plan(
                 plan_file=args.plan,
                 specific_app=args.app,
-                specific_task_index=args.task_index
+                specific_task_index=args.task_index,
+                max_apps=args.max_apps,
+                max_tasks_per_app=args.max_tasks_per_app,
+                selection_only=args.selection_only,
             )
 
         # 否则，运行端到端流程
         else:
             executor = EndToEndExecutor(
                 device=device,
-                api_key=api_key,
-                model=args.model,
+                api_key=llm_config.api_key,
+                api_base=llm_config.api_base,
+                model=llm_config.model,
                 threshold=args.threshold,
-                device_serial=args.device_serial
+                device_serial=device.device_serial
             )
 
             summary = executor.run_end_to_end(
                 case_background=args.case or "",
                 forensic_goals=args.goals or "",
                 specific_app=args.app,
-                specific_task_index=args.task_index
+                specific_task_index=args.task_index,
+                max_apps=args.max_apps,
+                max_tasks_per_app=args.max_tasks_per_app,
+                selection_only=args.selection_only,
+                skip_app_extract=args.skip_app_extract,
             )
 
         # 退出码

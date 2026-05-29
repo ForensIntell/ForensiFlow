@@ -5,8 +5,28 @@ ForensiFlow 统一配置管理模块
 """
 
 import os
+import shlex
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
+
+
+DEFAULT_MIMO_API_BASE = "https://your-openai-compatible-endpoint/v1"
+DEFAULT_MIMO_MODEL = "your-model-name"
+
+
+def _is_placeholder_secret(value: str) -> bool:
+    normalized = (value or "").strip().lower()
+    return normalized.startswith(("your_", "your-", "changeme", "change_me"))
+
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """OpenAI-compatible LLM configuration shared by all model callers."""
+
+    api_key: str
+    api_base: str
+    model: str
 
 
 class Config:
@@ -28,8 +48,11 @@ class Config:
 
         self.env_file = Path(env_file)
 
-        # 加载 .env 文件
+        # 加载 .env 文件。额外加载 .env.mimo，方便项目统一使用 Mimo/Momi 配置。
         self._load_env()
+        mimo_env = self.project_root / ".env.mimo"
+        if mimo_env.exists() and mimo_env != self.env_file:
+            self._load_env_file(mimo_env)
 
     def _load_env(self):
         """加载 .env 文件"""
@@ -37,42 +60,160 @@ class Config:
             print(f"⚠️  警告：.env 文件不存在: {self.env_file}")
             print(f"💡 提示：请复制 .env.template 为 .env 并配置您的 API Key")
             return
+        self._load_env_file(self.env_file)
 
+    def _load_env_file(self, env_file: Path):
+        """加载 KEY=VALUE 或 export KEY=VALUE 格式的环境文件。"""
         # 读取 .env 文件并设置环境变量
-        with open(self.env_file, 'r', encoding='utf-8') as f:
+        with open(env_file, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 # 跳过注释和空行
                 if not line or line.startswith('#'):
                     continue
 
+                if line.startswith("export "):
+                    line = line[len("export "):].strip()
+
                 # 解析 KEY=VALUE 格式
                 if '=' in line:
                     key, value = line.split('=', 1)
                     key = key.strip()
                     value = value.strip()
+                    try:
+                        parsed = shlex.split(value, posix=True)
+                        if len(parsed) == 1:
+                            value = parsed[0]
+                    except ValueError:
+                        value = value.strip().strip('"').strip("'")
 
                     # 如果环境变量尚未设置，则使用 .env 中的值
                     if key not in os.environ:
                         os.environ[key] = value
 
     # ==================== LLM API 配置 ====================
+    def resolve_llm_config(
+        self,
+        *,
+        api_key: Optional[str] = None,
+        api_base: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> LLMConfig:
+        """解析全项目统一的 Mimo/Momi OpenAI-compatible 配置。
+
+        优先级：显式参数 > FORENSIFLOW/MOMI/MIMO/LLM 环境变量 >
+        PAGE_AGENT_MOBILE 旧兼容环境变量 >
+        旧 OPENAI/QWEN/YUNWU 兼容环境变量 > OpenAI-compatible 默认 endpoint/model。
+        """
+        resolved_key = (
+            api_key
+            or os.getenv("FORENSIFLOW_API_KEY")
+            or os.getenv("FORENSIFLOW_LLM_API_KEY")
+            or os.getenv("MOMI_API_KEY")
+            or os.getenv("MIMO_API_KEY")
+            or os.getenv("LLM_API_KEY")
+            or os.getenv("PAGE_AGENT_MOBILE_API_KEY")
+            or os.getenv("EXPERIMENTAL_AGENT_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("QWEN_API_KEY")
+            or os.getenv("YUNWU_API_KEY")
+            or ""
+        )
+        if not resolved_key or _is_placeholder_secret(resolved_key):
+            raise ValueError(
+                "❌ LLM API Key 未配置。\n"
+                "   请设置 FORENSIFLOW_API_KEY/MOMI_API_KEY/MIMO_API_KEY/LLM_API_KEY，"
+                "或使用 .env.mimo 中的兼容 API Key。"
+            )
+
+        resolved_base = (
+            api_base
+            or os.getenv("FORENSIFLOW_API_BASE")
+            or os.getenv("FORENSIFLOW_LLM_API_BASE")
+            or os.getenv("MOMI_API_BASE")
+            or os.getenv("MIMO_API_BASE")
+            or os.getenv("LLM_API_BASE")
+            or os.getenv("PAGE_AGENT_MOBILE_API_BASE")
+            or os.getenv("EXPERIMENTAL_AGENT_API_BASE")
+            or os.getenv("OPENAI_BASE_URL")
+            or os.getenv("QWEN_API_URL")
+            or os.getenv("YUNWU_API_URL")
+            or DEFAULT_MIMO_API_BASE
+        )
+        resolved_model = (
+            model
+            or os.getenv("FORENSIFLOW_MODEL")
+            or os.getenv("FORENSIFLOW_LLM_MODEL")
+            or os.getenv("MOMI_MODEL")
+            or os.getenv("MIMO_MODEL")
+            or os.getenv("LLM_MODEL")
+            or os.getenv("PAGE_AGENT_MOBILE_MODEL")
+            or os.getenv("EXPERIMENTAL_AGENT_MODEL")
+            or os.getenv("OPENAI_MODEL")
+            or DEFAULT_MIMO_MODEL
+        )
+        return LLMConfig(api_key=resolved_key, api_base=resolved_base, model=resolved_model)
+
+    def configure_llm_environment(self, config: Optional[LLMConfig] = None) -> LLMConfig:
+        """Expose the unified LLM config through legacy env names used by old modules."""
+        resolved = config or self.resolve_llm_config()
+        aliases = {
+            "FORENSIFLOW_API_KEY": resolved.api_key,
+            "FORENSIFLOW_LLM_API_KEY": resolved.api_key,
+            "MOMI_API_KEY": resolved.api_key,
+            "MIMO_API_KEY": resolved.api_key,
+            "LLM_API_KEY": resolved.api_key,
+            "PAGE_AGENT_MOBILE_API_KEY": resolved.api_key,
+            "OPENAI_API_KEY": resolved.api_key,
+            "QWEN_API_KEY": resolved.api_key,
+            "YUNWU_API_KEY": resolved.api_key,
+            "FORENSIFLOW_API_BASE": resolved.api_base,
+            "FORENSIFLOW_LLM_API_BASE": resolved.api_base,
+            "MOMI_API_BASE": resolved.api_base,
+            "MIMO_API_BASE": resolved.api_base,
+            "LLM_API_BASE": resolved.api_base,
+            "PAGE_AGENT_MOBILE_API_BASE": resolved.api_base,
+            "OPENAI_BASE_URL": resolved.api_base,
+            "QWEN_API_URL": resolved.api_base,
+            "YUNWU_API_URL": resolved.api_base,
+            "FORENSIFLOW_MODEL": resolved.model,
+            "FORENSIFLOW_LLM_MODEL": resolved.model,
+            "MOMI_MODEL": resolved.model,
+            "MIMO_MODEL": resolved.model,
+            "LLM_MODEL": resolved.model,
+            "PAGE_AGENT_MOBILE_MODEL": resolved.model,
+            "OPENAI_MODEL": resolved.model,
+            "QWEN_DEFAULT_MODEL": resolved.model,
+        }
+        for key, value in aliases.items():
+            os.environ[key] = value
+        return resolved
+
+    @property
+    def llm_api_key(self) -> str:
+        """统一 LLM API Key。"""
+        return self.resolve_llm_config().api_key
+
+    @property
+    def llm_api_base(self) -> str:
+        """统一 LLM API endpoint。"""
+        return self.resolve_llm_config().api_base
+
+    @property
+    def llm_model(self) -> str:
+        """统一 LLM 默认模型。"""
+        return self.resolve_llm_config().model
+
     @property
     def qwen_api_key(self) -> str:
-        """获取 Qwen API Key"""
-        api_key = os.getenv("QWEN_API_KEY")
-        if not api_key or api_key == "your_qwen_api_key_here":
-            raise ValueError(
-                "❌ QWEN_API_KEY 未配置！\n"
-                "   请在 .env 文件中设置 QWEN_API_KEY"
-            )
-        return api_key
+        """兼容旧代码：返回统一 LLM API Key。"""
+        return self.llm_api_key
 
     @property
     def chatglm_api_key(self) -> str:
         """获取 ChatGLM API Key"""
         api_key = os.getenv("CHATGLM_API_KEY")
-        if not api_key or api_key == "your_chatglm_api_key_here":
+        if not api_key or _is_placeholder_secret(api_key):
             raise ValueError(
                 "❌ CHATGLM_API_KEY 未配置！\n"
                 "   请在 .env 文件中设置 CHATGLM_API_KEY"
@@ -81,8 +222,8 @@ class Config:
 
     @property
     def qwen_api_url(self) -> str:
-        """Qwen API 端点"""
-        return os.getenv("QWEN_API_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+        """兼容旧代码：返回统一 LLM API endpoint。"""
+        return self.llm_api_base
 
     @property
     def chatglm_api_url(self) -> str:
@@ -91,8 +232,8 @@ class Config:
 
     @property
     def qwen_default_model(self) -> str:
-        """Qwen 默认模型"""
-        return os.getenv("QWEN_DEFAULT_MODEL", "qwen3.5-27b")
+        """兼容旧代码：返回统一 LLM 默认模型。"""
+        return self.llm_model
 
     @property
     def chatglm_default_model(self) -> str:
@@ -208,8 +349,20 @@ def get_config() -> Config:
 
 # 便捷函数
 def get_qwen_api_key() -> str:
-    """获取 Qwen API Key"""
+    """获取统一 LLM API Key（旧函数名兼容）。"""
     return get_config().qwen_api_key
+
+
+def get_llm_config(
+    api_key: Optional[str] = None,
+    api_base: Optional[str] = None,
+    model: Optional[str] = None,
+) -> LLMConfig:
+    """获取统一 LLM 配置。"""
+    config = get_config()
+    resolved = config.resolve_llm_config(api_key=api_key, api_base=api_base, model=model)
+    config.configure_llm_environment(resolved)
+    return resolved
 
 
 def get_chatglm_api_key() -> str:
