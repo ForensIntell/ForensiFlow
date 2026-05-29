@@ -5,7 +5,7 @@
 **基于 Vision-Language Model 的移动端应用自动化取证系统**
 
 [![Python](https://img.shields.io/badge/Python-3.8%2B-blue)](https://www.python.org/)
-[![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-orange)](LICENSE)
 [![Status](https://img.shields.io/badge/Status-Active-success)]()
 
 </div>
@@ -802,7 +802,9 @@ python run_all_tasks.py --task-file test_tasks.json
 
 ## 📄 许可证
 
-MIT License - 详见 LICENSE 文件
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)。
+
+该许可证允许非商业目的的使用、修改和分发；商业使用不在默认授权范围内，如需商业使用请另行取得授权。
 
 ---
 
