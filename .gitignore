@@ -43,12 +43,14 @@ xml_dumps/
 /wechat_*.json
 forensiflow_universal_raw_data.json
 
+# ========== 本地 RAG 模板导出 ==========
+external/rag_templates/*.json
+!external/rag_templates/all_templates.json
+
 # ========== 模型文件（太大，不提交） ==========
-external/ForensiVision/pt_model/
-external/models/
-!external/ForensiVision/pt_model/
+external/ForensiVision/pt_model/*
 !external/ForensiVision/pt_model/README.md
-!external/models/
+external/models/*
 !external/models/README.md
 *.pt
 *.pth
@@ -137,6 +139,7 @@ API_KEY_MIGRATION_GUIDE.md
 API_KEY_UNIFICATION_REPORT.md
 PROJECT_RENAMING_REPORT.md
 DIRECTORY_RENAMING_SUMMARY.md
+docs/*实验方案*.md
 
 # ========== 其他 ==========
 .git/

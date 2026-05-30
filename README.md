@@ -187,12 +187,12 @@ cp .env.template .env
 编辑 `.env` 文件，配置必要的 API 密钥：
 
 ```bash
-# OpenAI-compatible API（必需）
+# Mimo/Momi OpenAI-compatible API（必需）
 MIMO_API_KEY=your-api-key
 
 # 可选覆盖
-MIMO_API_BASE=https://your-openai-compatible-endpoint/v1
-MIMO_MODEL=your-model-name
+MIMO_API_BASE=https://token-plan-cn.xiaomimimo.com/v1
+MIMO_MODEL=mimo-v2.5-pro
 ```
 
 #### 4. 连接 Android 设备
@@ -274,7 +274,7 @@ from runner.forensiflow.core.scheduler_vt import TaskSchedulerVT
 scheduler = TaskSchedulerVT(
     device=device,
     planner_api_key="your-api-key",
-    planner_model="your-model-name"
+    planner_model="mimo-v2.5-pro"
 )
 
 result = scheduler.run_task(
@@ -296,7 +296,7 @@ from runner.forensiflow.core.codex_agent_scheduler import CodexAgentScheduler
 scheduler = CodexAgentScheduler(
     device=device,
     api_key="your-api-key",
-    model="your-model-name"
+    model="mimo-v2.5-pro"
 )
 
 result = scheduler.run_task(
@@ -314,7 +314,7 @@ result = scheduler.run_task(
 ```python
 from runner.forensiflow.core.forensic_planner import ForensicPlanner
 
-planner = ForensicPlanner(api_key="your-api-key", model="your-model-name")
+planner = ForensicPlanner(api_key="your-api-key", model="mimo-v2.5-pro")
 plan = planner.create_forensic_plan(
     case_background="涉嫌网络诈骗案...",
     forensic_goals="提取 WhatsApp 聊天记录\n提取微信联系人"
@@ -469,16 +469,16 @@ result = scheduler.run_task(
 #### 必需配置
 
 ```bash
-# OpenAI-compatible API（必需）
+# Mimo/Momi API（必需）
 MIMO_API_KEY=your-api-key
 ```
 
 #### 可选配置
 
 ```bash
-# OpenAI-compatible API
-MIMO_API_BASE=https://your-openai-compatible-endpoint/v1
-MIMO_MODEL=your-model-name
+# Mimo/Momi OpenAI-compatible API
+MIMO_API_BASE=https://token-plan-cn.xiaomimimo.com/v1
+MIMO_MODEL=mimo-v2.5-pro
 
 # OCR API
 OCR_API_KEY=your-ocr-api-key
@@ -491,11 +491,11 @@ TIMEOUT=30
 
 ### 模型配置
 
-所有大模型调用默认统一使用 OpenAI-compatible 配置：
+所有大模型调用默认统一使用 Mimo/Momi OpenAI-compatible 配置：
 
 ```python
 # 自动应用，无需手动配置
-model = "your-model-name"
+model = "mimo-v2.5-pro"
 ```
 
 ### 设备配置
@@ -607,7 +607,7 @@ register_script("custom_extract", extract_data)
 python run_all_tasks.py \
     --task-file runner/forensiflow/task.json \
     --max-steps 35 \
-    --model your-model-name
+    --model mimo-v2.5-pro
 ```
 
 ### 3. 约束条件执行

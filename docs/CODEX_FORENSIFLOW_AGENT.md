@@ -107,8 +107,24 @@ python tools/verify_evidence_integrity.py <run_dir>
 
 ## Local Codex Setup
 
-- `CODEX_HOME`: `<REPO_ROOT>
+- `CODEX_HOME`: `<REPO_ROOT>/.codex-forensiflow-agent`
 - skill: `$forensiflow-mobile-agent`
 - local MIMO Responses proxy: `http://127.0.0.1:8788/v1`
+- preferred local source-built binary:
+  `external/codex/codex-rs/target/forensiflow/release/codex`
+- fallback wrapper:
+  `external/codex/codex-cli/bin/codex.js`
+
+Runner resolution order:
+
+1. `FORENSIFLOW_CODEX_BIN`, if set.
+2. The local source-built binary above, if it exists.
+3. The Node `codex.js` wrapper and its npm/native Codex release.
+
+To force the old wrapper path for comparison:
+
+```bash
+FORENSIFLOW_CODEX_DISABLE_SOURCE_BIN=1 python tools/run_codex_forensiflow_full_agent.py ...
+```
 
 Full mobile control requires `danger-full-access` because ADB and uiautomator2 use local sockets. Script-workspace repair defaults to `workspace-write`.
