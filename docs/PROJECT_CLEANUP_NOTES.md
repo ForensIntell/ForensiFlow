@@ -30,7 +30,7 @@ Safe to remove when needed:
 Do not remove without an explicit task:
 
 - `data/` and `artifacts/`.
-- `.env`, `.env.mimo`, and local Codex auth/config files.
+- `.env`, `.env.mimo` (compatibility file), and local Codex auth/config files.
 - `external/models/` and `runner/forensiflow/perception/_visual_backend/pt_model/`.
 - `external/rag_templates/`.
 - `runner/forensiflow/scripts/generated/` and generated script registries.

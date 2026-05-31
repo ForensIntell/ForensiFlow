@@ -20,7 +20,7 @@ from .semantic_matcher import SemanticMatcher, SemanticMatcherMock
 from .rag_template_matcher import RAGTemplateMatcher, RAGTemplateMatcherMock
 from .script_registry import ScriptRegistry
 from .xml_utils import XMLSimplifier
-from .config import DEFAULT_MIMO_API_BASE, DEFAULT_MIMO_MODEL, get_llm_config
+from .config import DEFAULT_LLM_API_BASE, DEFAULT_LLM_MODEL, get_llm_config
 from runner.forensiflow.perception import VISUAL_BACKEND_ROOT
 
 
@@ -51,7 +51,7 @@ class TaskSchedulerVT:
             or os.getenv("LLM_API_BASE")
             or os.getenv("PAGE_AGENT_MOBILE_API_BASE")
             or os.getenv("QWEN_API_URL")
-            or os.getenv("YUNWU_API_URL", DEFAULT_MIMO_API_BASE)
+            or os.getenv("YUNWU_API_URL", DEFAULT_LLM_API_BASE)
         )
         CHATGLM_API_URL = os.getenv("CHATGLM_API_URL", "https://open.bigmodel.cn/api/paas/v4")
 
@@ -61,7 +61,7 @@ class TaskSchedulerVT:
             or os.getenv("FORENSIFLOW_LLM_MODEL")
             or os.getenv("LLM_MODEL")
             or os.getenv("PAGE_AGENT_MOBILE_MODEL")
-            or os.getenv("QWEN_DEFAULT_MODEL", DEFAULT_MIMO_MODEL)
+            or os.getenv("QWEN_DEFAULT_MODEL", DEFAULT_LLM_MODEL)
         )
         CHATGLM_DEFAULT_MODEL = "glm-4-flash"
 
@@ -152,7 +152,7 @@ class TaskSchedulerVT:
         self._visual_module_path = self._Config.VISUAL_BACKEND_PATH
         self._visual_process_img = None  # process_img 函数引用
 
-        # Planner configuration: all OpenAI-compatible model calls share the same Mimo/Momi config.
+        # Planner configuration: all OpenAI-compatible model calls share the same LLM config.
         llm_config = get_llm_config(
             api_key=planner_api_key,
             api_base=planner_base_url,

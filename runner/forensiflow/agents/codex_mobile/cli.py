@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from runner.forensiflow.core.logging_utils import configure_logging
-from runner.forensiflow.core.config import DEFAULT_MIMO_API_BASE, DEFAULT_MIMO_MODEL, get_llm_config
+from runner.forensiflow.core.config import DEFAULT_LLM_API_BASE, DEFAULT_LLM_MODEL, get_llm_config
 from runner.forensiflow.devices.android import AndroidDevice
 
 from .codex_agent import run_codex_forensiflow_full_agent
@@ -26,8 +26,8 @@ if str(TOOLS_DIR) not in sys.path:
 from device_serial import PLACEHOLDER_SERIALS, adb_devices_text, resolve_device_serial
 
 
-DEFAULT_API_BASE = DEFAULT_MIMO_API_BASE
-DEFAULT_MODEL = DEFAULT_MIMO_MODEL
+DEFAULT_API_BASE = DEFAULT_LLM_API_BASE
+DEFAULT_MODEL = DEFAULT_LLM_MODEL
 DEFAULT_API_KEY = ""
 
 

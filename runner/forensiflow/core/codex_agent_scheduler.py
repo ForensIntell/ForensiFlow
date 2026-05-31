@@ -14,7 +14,7 @@ from typing import Any, Dict, Optional
 
 from runner.forensiflow.agents.codex_mobile.codex_agent import run_codex_forensiflow_full_agent
 from runner.forensiflow.agents.codex_mobile.runtime import CodexMobileRuntime
-from runner.forensiflow.core.config import DEFAULT_MIMO_API_BASE, DEFAULT_MIMO_MODEL, get_llm_config
+from runner.forensiflow.core.config import DEFAULT_LLM_API_BASE, DEFAULT_LLM_MODEL, get_llm_config
 
 
 logger = logging.getLogger(__name__)
@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 class CodexAgentScheduler:
     """Adapter exposing the same high-level methods as the legacy scheduler."""
 
-    DEFAULT_API_BASE = DEFAULT_MIMO_API_BASE
-    DEFAULT_MODEL = DEFAULT_MIMO_MODEL
+    DEFAULT_API_BASE = DEFAULT_LLM_API_BASE
+    DEFAULT_MODEL = DEFAULT_LLM_MODEL
 
     def __init__(
         self,

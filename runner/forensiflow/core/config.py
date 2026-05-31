@@ -11,8 +11,12 @@ from pathlib import Path
 from typing import Optional
 
 
-DEFAULT_MIMO_API_BASE = "https://your-openai-compatible-endpoint/v1"
-DEFAULT_MIMO_MODEL = "your-model-name"
+DEFAULT_LLM_API_BASE = "https://your-openai-compatible-endpoint/v1"
+DEFAULT_LLM_MODEL = "your-model-name"
+
+# Backward-compatible aliases used by older code paths and env examples.
+DEFAULT_MIMO_API_BASE = DEFAULT_LLM_API_BASE
+DEFAULT_MIMO_MODEL = DEFAULT_LLM_MODEL
 
 
 def _is_placeholder_secret(value: str) -> bool:
@@ -48,7 +52,7 @@ class Config:
 
         self.env_file = Path(env_file)
 
-        # 加载 .env 文件。额外加载 .env.mimo，方便项目统一使用 Mimo/Momi 配置。
+        # 加载 .env 文件。额外加载 .env.mimo，方便兼容旧的 Mimo/Momi 配置。
         self._load_env()
         mimo_env = self.project_root / ".env.mimo"
         if mimo_env.exists() and mimo_env != self.env_file:
@@ -99,7 +103,7 @@ class Config:
         api_base: Optional[str] = None,
         model: Optional[str] = None,
     ) -> LLMConfig:
-        """解析全项目统一的 Mimo/Momi OpenAI-compatible 配置。
+        """解析全项目统一的 OpenAI-compatible 大语言模型配置。
 
         优先级：显式参数 > FORENSIFLOW/MOMI/MIMO/LLM 环境变量 >
         PAGE_AGENT_MOBILE 旧兼容环境变量 >
@@ -123,7 +127,7 @@ class Config:
             raise ValueError(
                 "❌ LLM API Key 未配置。\n"
                 "   请设置 FORENSIFLOW_API_KEY/MOMI_API_KEY/MIMO_API_KEY/LLM_API_KEY，"
-                "或使用 .env.mimo 中的兼容 API Key。"
+                "或使用 .env/.env.mimo 中的兼容配置。"
             )
 
         resolved_base = (
@@ -138,7 +142,7 @@ class Config:
             or os.getenv("OPENAI_BASE_URL")
             or os.getenv("QWEN_API_URL")
             or os.getenv("YUNWU_API_URL")
-            or DEFAULT_MIMO_API_BASE
+            or DEFAULT_LLM_API_BASE
         )
         resolved_model = (
             model
@@ -150,7 +154,7 @@ class Config:
             or os.getenv("PAGE_AGENT_MOBILE_MODEL")
             or os.getenv("EXPERIMENTAL_AGENT_MODEL")
             or os.getenv("OPENAI_MODEL")
-            or DEFAULT_MIMO_MODEL
+            or DEFAULT_LLM_MODEL
         )
         return LLMConfig(api_key=resolved_key, api_base=resolved_base, model=resolved_model)
 

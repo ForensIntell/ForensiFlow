@@ -143,8 +143,16 @@ def _ensure_proxy(codex_home: Path) -> None:
     log_path = codex_home / "proxy.log"
     log_file = log_path.open("ab")
     env = os.environ.copy()
-    if api_key and not env.get("MIMO_API_KEY"):
-        env["MIMO_API_KEY"] = api_key
+    if api_key:
+        for key in (
+            "FORENSIFLOW_API_KEY",
+            "FORENSIFLOW_LLM_API_KEY",
+            "MOMI_API_KEY",
+            "MIMO_API_KEY",
+            "LLM_API_KEY",
+            "OPENAI_API_KEY",
+        ):
+            env.setdefault(key, api_key)
     start_timeout = max(5, _env_int("FORENSIFLOW_MIMO2CODEX_HEALTH_TIMEOUT_SECONDS", DEFAULT_PROXY_START_TIMEOUT_SECONDS))
     poll_seconds = max(0.1, float(os.getenv("FORENSIFLOW_MIMO2CODEX_HEALTH_POLL_SECONDS") or DEFAULT_PROXY_POLL_SECONDS))
     enable_admin = _env_bool("FORENSIFLOW_MIMO2CODEX_ENABLE_ADMIN", _env_bool("MIMO2CODEX_ENABLE_ADMIN", False))

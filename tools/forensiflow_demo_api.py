@@ -185,6 +185,8 @@ def _llm_configured() -> bool:
         return normalized.startswith(("your_", "your-", "changeme", "change_me"))
 
     keys = [
+        "FORENSIFLOW_API_KEY",
+        "FORENSIFLOW_LLM_API_KEY",
         "MOMI_API_KEY",
         "MIMO_API_KEY",
         "LLM_API_KEY",
