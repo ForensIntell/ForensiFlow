@@ -1,7 +1,7 @@
 """
 Execution Modules
 
-Small helpers used by the legacy ForensiVision scheduler.
+Small helpers used by the replay scheduler and visual perception backend.
 """
 
 # Lazy imports to avoid dependency issues

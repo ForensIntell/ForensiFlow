@@ -3,7 +3,8 @@ ForensiFlow Core Module
 
 Contains modular components for task execution:
 - modules: Individual execution modules (screenshot, decider, grounder, executor, etc.)
-- scheduler_vt: Task scheduler with ForensiVision API integration
+- scheduler_vt: Legacy-compatible visual scheduler entry point
+- scheduler_visual: Preferred visual scheduler alias for the migrated perception stack
 - codex_agent_scheduler: Codex-backed mobile agent used by the current new-scheduler path
 - forensic_planner: Forensic task planning module
 """
@@ -13,6 +14,9 @@ def __getattr__(name):
     if name == 'TaskSchedulerVT':
         from .scheduler_vt import TaskSchedulerVT as _TSVT
         return _TSVT
+    elif name == 'TaskSchedulerVisual':
+        from .scheduler_visual import TaskSchedulerVisual as _TSV
+        return _TSV
     elif name == 'CodexAgentScheduler':
         from .codex_agent_scheduler import CodexAgentScheduler as _CAS
         return _CAS
@@ -26,6 +30,7 @@ def __getattr__(name):
 
 __all__ = [
     'TaskSchedulerVT',
+    'TaskSchedulerVisual',
     'CodexAgentScheduler',
     'PageAgentMobileScheduler',
     'ForensicPlanner',

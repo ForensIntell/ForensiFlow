@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { CircleNotch } from "@phosphor-icons/react";
 import { api } from "../lib/api";
 import { useAsyncData } from "../lib/hooks";
@@ -13,30 +12,33 @@ function SettingGroup({ title, children }: { title: string; children: React.Reac
   );
 }
 
-function Field({ label, defaultValue, helper }: { label: string; defaultValue: string; helper?: string }) {
+function Field({ label, value, helper }: { label: string; value: string; helper?: string }) {
   return (
     <div className="flex flex-col gap-1.5">
       <label className="text-xs text-text-muted">{label}</label>
       <input
-        defaultValue={defaultValue}
-        className="rounded-xl border border-border bg-bg px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft"
+        value={value}
+        readOnly
+        disabled
+        className="rounded-xl border border-border bg-bg px-3 py-2 text-sm text-text-muted outline-none disabled:cursor-not-allowed disabled:opacity-75"
       />
       {helper && <p className="text-xs text-text-dim">{helper}</p>}
     </div>
   );
 }
 
-function Toggle({ label, defaultChecked }: { label: string; defaultChecked?: boolean }) {
-  const [on, setOn] = useState(!!defaultChecked);
+function Toggle({ label, checked }: { label: string; checked?: boolean }) {
+  const on = Boolean(checked);
   return (
-    <label className="flex items-center justify-between cursor-pointer">
+    <label className="flex items-center justify-between opacity-75">
       <span className="text-sm">{label}</span>
       <button
         type="button"
         role="switch"
         aria-checked={on}
-        onClick={() => setOn(!on)}
-        className={`relative h-6 w-11 rounded-full transition-colors ${on ? "bg-accent" : "bg-border"}`}
+        disabled
+        title="后端设置写入接口未接入"
+        className={`relative h-6 w-11 cursor-not-allowed rounded-full transition-colors ${on ? "bg-accent" : "bg-border"}`}
       >
         <span
           className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-white shadow transition-transform ${on ? "translate-x-5" : "translate-x-0"}`}
@@ -71,28 +73,36 @@ export function SettingsPage() {
             description={`ADB: ${data.adb.ok ? `${data.adb.devices.length} 台设备` : "不可用"}；LLM: ${data.llmConfigured ? "已配置" : "未配置"}；数据目录: ${data.dataDirExists ? "存在" : "缺失"}`}
           />
         )}
+        <div className="mt-3">
+          <StatusBanner
+            tone="warning"
+            title="设置写入暂未开放"
+            description="后端当前只提供健康检查接口，没有模型配置、设备配置或取证配置的更新接口；本页所有配置项均为只读。"
+          />
+        </div>
       </div>
 
       <div className="flex flex-col gap-6">
         <SettingGroup title="模型配置">
-          <Field label="LLM API Base" defaultValue="从 .env / .env.mimo 加载" />
-          <Field label="LLM Model" defaultValue="从 .env / .env.mimo 加载" />
-          <Field label="API Key" defaultValue={data?.llmConfigured ? "已配置" : "未配置"} helper="后端不会向前端返回密钥原文" />
+          <Field label="LLM API Base" value="由后端 .env / .env.mimo 加载" />
+          <Field label="LLM Model" value="由后端 .env / .env.mimo 加载" />
+          <Field label="API Key" value={data?.llmConfigured ? "已配置" : "未配置"} helper="后端不会向前端返回密钥原文" />
         </SettingGroup>
 
         <SettingGroup title="设备连接">
-          <Field label="ADB 路径" defaultValue="/usr/bin/adb" />
-          <Field label="设备序列号" defaultValue={data?.adb.devices.map((item) => `${item.serial}:${item.state}`).join(", ") || "未检测到"} />
+          <Field label="ADB 路径" value="由后端运行环境决定" />
+          <Field label="设备序列号" value={data?.adb.devices.map((item) => `${item.serial}:${item.state}`).join(", ") || "未检测到"} />
           <button onClick={refresh} className="w-fit rounded-xl border border-border px-3 py-2 text-xs text-text-muted hover:bg-bg transition">重新检查</button>
         </SettingGroup>
 
         <SettingGroup title="取证配置">
-          <Field label="截图保存目录" defaultValue="./data/screenshots" />
-          <Field label="证据导出路径" defaultValue="./data/evidence_export" />
-          <Field label="BGE 模型路径" defaultValue="./external/models/bge-large-zh-v1.5" />
-          <Toggle label="审计链开启" defaultChecked />
-          <Toggle label="自动经验沉淀" defaultChecked />
-          <Toggle label="Demo 日志模式" />
+          <Field label="截图保存目录" value="后端未暴露配置读取接口" />
+          <Field label="证据导出路径" value="后端未暴露配置读取接口" />
+          <Field label="BGE 模型路径" value="后端未暴露配置读取接口" />
+          <Toggle label="审计链开启" checked />
+          <Toggle label="自动经验沉淀" checked={false} />
+          <Toggle label="Demo 日志模式" checked={false} />
+          <p className="text-xs text-text-dim">这些开关当前没有后端写入接口，已禁用。</p>
         </SettingGroup>
       </div>
     </div>

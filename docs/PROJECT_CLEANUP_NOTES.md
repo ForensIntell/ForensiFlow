@@ -12,9 +12,9 @@ This document records the project structure decisions used before the next exper
 - `runner/forensiflow/`: core device bridge, planner, route selector, replay runner, script registry, and extraction scripts.
 - `runner/forensiflow/agents/codex_mobile/`: canonical Codex mobile-agent runtime and script-generation tooling.
 - `page_agent_mobile/`: backward-compatible wrapper for old imports and commands.
-- `forensiflow-web/`: React/Vite frontend prototype. It is not yet connected to the Python execution layer.
+- `forensiflow-web/`: React/Vite frontend, now wired to the FastAPI adapter in `tools/forensiflow_demo_api.py` for device, job, evidence, audit, and report views.
 - `tools/`: Codex agent wrappers and support utilities.
-- `external/ForensiVision/`, `external/models/`, `external/rag_templates/`: required local assets for replay, matching, and reuse.
+- `runner/forensiflow/perception/_visual_backend/`, `external/models/`, `external/rag_templates/`: required local assets for replay, matching, and reuse.
 - `data/`, `artifacts/`: local experiment data and debugging output. Treat as evidence-like runtime material.
 - `runner/forensiflow/core/evidence_integrity.py`: SHA-256 manifest and hash-chain helpers for experiment artifact integrity.
 
@@ -31,14 +31,14 @@ Do not remove without an explicit task:
 
 - `data/` and `artifacts/`.
 - `.env`, `.env.mimo`, and local Codex auth/config files.
-- `external/models/` and `external/ForensiVision/pt_model/`.
+- `external/models/` and `runner/forensiflow/perception/_visual_backend/pt_model/`.
 - `external/rag_templates/`.
 - `runner/forensiflow/scripts/generated/` and generated script registries.
 - `archive/`, `old/`, and external source checkouts unless a migration/deprecation decision has been made.
 
 ## Known Structure Issues
 
-- The frontend currently uses mock data and has no backend API wiring.
+- The frontend previously used placeholder data in several pages. Those fallbacks should stay removed; only backend-backed data or explicit "暂未开放" states should remain.
 - Some generated RAG templates and generated script metadata contain old absolute paths from `<REPO_ROOT> and old `page_agent_mobile` names. They are preserved for provenance; runtime lookup should prefer current repo-relative registry paths where available.
 - `data/` is large and mixed: it contains sample data, real run data, debug dumps, generated templates, and device-specific outputs. A future data-retention policy should split these categories.
 - The repository contains third-party or vendored trees (`external/codex`, `external/smolagents`, `opencode`). They should be considered external dependencies, not core ForensiFlow code.

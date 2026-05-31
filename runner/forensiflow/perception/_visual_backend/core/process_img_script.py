@@ -363,7 +363,7 @@ def line_det(img_path, output_root, show_bu_show=True, clean_save=False, workflo
             cv2.line(src, (x0, y0), (x1, y1), (0, 0, 255), 3, cv2.LINE_AA)
 
         if not clean_save:
-            cv2.imwrite(output_root + 'layout/' + im_name + '_lines.jpg', src)  # 存图
+            cv2.imwrite(os.path.join(output_root, 'layout', im_name + '_lines.jpg'), src)  # 存图
         if show_bu_show:
             plt.figure(figsize=(9, 16))
             plt.imshow(src[:, :, [2, 1, 0]])
@@ -397,6 +397,14 @@ def process_img(label_path_dir, img_path, output_root, layout_json_dir,
 
     ocr = pd_free_ocr
     st_time = time.time()
+
+    # Direct callers may only provide the run root. Make the expected backend
+    # subdirectories available up front so OCR/layout persistence does not fail
+    # before the scheduler gets a chance to create them.
+    for subdir in ("ocr", "ip", "uied", "layout", "workflow"):
+        os.makedirs(os.path.join(output_root, subdir), exist_ok=True)
+    if layout_json_dir:
+        os.makedirs(layout_json_dir, exist_ok=True)
 
     torch.set_grad_enabled(False)
 

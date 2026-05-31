@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { ShieldCheck, WifiHigh, Export, Circle, CircleNotch } from "@phosphor-icons/react";
-import { api, apiUrl, type ApiDevice } from "../../lib/api";
+import { api, apiUrl } from "../../lib/api";
 import { useAsyncData } from "../../lib/hooks";
 
 export function AppTopbar() {
-  const { data, loading, error } = useAsyncData(() => api.devices(), []);
+  const { data, loading, error } = useAsyncData(() => api.workspaceState(false), []);
   const [exporting, setExporting] = useState(false);
-  const device: ApiDevice | undefined = data?.devices?.find((item) => item.status === "connected") ?? data?.devices?.[0];
+  const device = data?.selectedDevice ?? data?.devices?.find((item) => item.status === "connected") ?? data?.devices?.[0];
+  const currentTask = data?.currentAction?.taskName || data?.latestJob?.caseName || data?.latestJob?.appName || "未提交任务";
 
   const handleExport = async () => {
     setExporting(true);
@@ -33,9 +34,11 @@ export function AppTopbar() {
 
       {/* Center: breadcrumb-style context */}
       <div className="hidden md:flex items-center gap-2 text-xs text-text-muted">
-        <span className="rounded-md bg-accent-soft px-2 py-0.5 text-accent font-medium">CASE-2026-001</span>
+        <span className="rounded-md bg-accent-soft px-2 py-0.5 text-accent font-medium">
+          {data?.latestJob?.id ? data.latestJob.id.slice(0, 10) : "等待任务"}
+        </span>
         <span className="text-text-dim">/</span>
-        <span>WhatsApp 证据采集</span>
+        <span>{currentTask}</span>
       </div>
 
       {/* Right: Status + Actions */}

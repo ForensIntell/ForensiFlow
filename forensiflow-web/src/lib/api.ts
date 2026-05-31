@@ -1,6 +1,10 @@
 import type { AuditSession, EvidenceItem } from "../types/stream";
 
-const API_BASE = import.meta.env.VITE_FORENSIFLOW_API_BASE ?? "";
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ??
+  import.meta.env.VITE_FORENSIFLOW_API_BASE ??
+  ""
+).replace(/\/$/, "");
 
 export interface ApiDevice {
   serial: string;
@@ -177,13 +181,18 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...init,
-    headers: {
-      "content-type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      ...init,
+      headers: {
+        "content-type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+    });
+  } catch (err) {
+    throw new ApiError(`无法连接后端 API：${err instanceof Error ? err.message : String(err)}`, 0);
+  }
   if (!response.ok) {
     let message = `${response.status} ${response.statusText}`;
     try {
@@ -193,6 +202,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
       // Keep HTTP status text.
     }
     throw new ApiError(message, response.status);
+  }
+  if (response.status === 204) {
+    return {} as T;
   }
   return response.json() as Promise<T>;
 }

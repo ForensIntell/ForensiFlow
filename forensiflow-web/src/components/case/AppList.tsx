@@ -1,10 +1,9 @@
-import { mockApps } from "../../lib/mock-data";
 import { api } from "../../lib/api";
 import { useAsyncData } from "../../lib/hooks";
 
 export default function AppList() {
   const { data, loading, error, refresh } = useAsyncData(() => api.apps(), []);
-  const apps = data?.apps?.length ? data.apps : mockApps;
+  const apps = data?.apps ?? [];
 
   return (
     <div className="flex flex-col gap-1.5">
@@ -17,7 +16,12 @@ export default function AppList() {
         </button>
       </div>
       {loading && <p className="text-[11px] text-text-dim">正在读取后端应用映射...</p>}
-      {error && <p className="text-[11px] text-warning">读取失败，显示静态示例：{error}</p>}
+      {error && <p className="text-[11px] text-warning">读取应用映射失败：{error}</p>}
+      {!loading && !error && apps.length === 0 && (
+        <p className="rounded-lg border border-dashed border-border bg-surface/70 px-3 py-3 text-[11px] leading-relaxed text-text-dim">
+          后端未返回应用映射，请先采集设备应用列表。
+        </p>
+      )}
 
       <ul className="flex flex-col gap-0.5">
         {apps.slice(0, 8).map((app, index) => (

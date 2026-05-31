@@ -2,13 +2,13 @@
 import sys
 import os
 
-# 确保 ForensiVision 根目录在 sys.path 的最前面，这样 layout 模块才能被找到
-_forensivision_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 确保视觉后端根目录在 sys.path 的最前面，这样 layout 模块才能被找到
+_visual_backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# 如果 ForensiVision 已经在 sys.path 中但不在位置 0，先移除再添加到位置 0
-if _forensivision_root in sys.path:
-    sys.path.remove(_forensivision_root)
-sys.path.insert(0, _forensivision_root)
+# 如果视觉后端已经在 sys.path 中但不在位置 0，先移除再添加到位置 0
+if _visual_backend_root in sys.path:
+    sys.path.remove(_visual_backend_root)
+sys.path.insert(0, _visual_backend_root)
 
 import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw, ImageFont

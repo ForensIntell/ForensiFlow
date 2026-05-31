@@ -48,8 +48,8 @@ external/rag_templates/*.json
 !external/rag_templates/all_templates.json
 
 # ========== 模型文件（太大，不提交） ==========
-external/ForensiVision/pt_model/*
-!external/ForensiVision/pt_model/README.md
+runner/forensiflow/perception/_visual_backend/pt_model/*.pt
+runner/forensiflow/perception/_visual_backend/pt_model/*.pth
 external/models/*
 !external/models/README.md
 *.pt
@@ -59,11 +59,11 @@ external/models/*
 *.safetensors
 
 # ========== ForensiVision 中间结果 ==========
-external/ForensiVision/core_gpt4v/
-external/ForensiVision/data/
-external/ForensiVision/debug_*.py
-external/ForensiVision/main_*.py
-external/ForensiVision/test_*.py
+runner/forensiflow/perception/_visual_backend/core_gpt4v/
+runner/forensiflow/perception/_visual_backend/data/
+runner/forensiflow/perception/_visual_backend/debug_*.py
+runner/forensiflow/perception/_visual_backend/main_*.py
+runner/forensiflow/perception/_visual_backend/test_*.py
 
 # ========== 备份文件 ==========
 backup_old_files/

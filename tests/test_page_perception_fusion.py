@@ -8,9 +8,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from runner.forensiflow.core.page_perception_fusion import (
+from runner.forensiflow.perception.fusion import (
     FusionConfig,
-    extract_forensivision_elements,
+    extract_visual_elements,
     extract_xml_elements_from_content,
     fuse_page_perception,
     load_xml_or_simplified,
@@ -19,7 +19,7 @@ from runner.forensiflow.core.page_perception_fusion import (
 
 
 class PagePerceptionFusionTests(unittest.TestCase):
-    def test_extract_forensivision_elements_flattens_blocks(self) -> None:
+    def test_extract_visual_elements_flattens_blocks(self) -> None:
         payload = [
             "alignment: v",
             {
@@ -44,7 +44,7 @@ class PagePerceptionFusionTests(unittest.TestCase):
                 ],
             },
         ]
-        elements = extract_forensivision_elements(payload)
+        elements = extract_visual_elements(payload)
         self.assertEqual(len(elements), 2)
         self.assertEqual(elements[0].text, "同意并继续")
         self.assertEqual(elements[1].sub_class, "Text")
@@ -97,12 +97,12 @@ class PagePerceptionFusionTests(unittest.TestCase):
         </hierarchy>
         """
         result = fuse_page_perception(
-            vision_elements=extract_forensivision_elements(vision),
+            vision_elements=extract_visual_elements(vision),
             xml_elements=extract_xml_elements_from_content(xml),
             config=FusionConfig(vertical_overlap_threshold=0.35, horizontal_overlap_threshold=0.05),
         )
         self.assertEqual(result["stats"]["regions"], 2)
-        self.assertGreaterEqual(result["stats"]["matched_vision_elements"], 1)
+        self.assertGreaterEqual(result["stats"]["matched_visual_elements"], 1)
         self.assertIn("标题：Hello", result["description"])
         self.assertIn("按钮", result["description"])
 
@@ -134,14 +134,14 @@ class PagePerceptionFusionTests(unittest.TestCase):
                 "region_id": "r-001",
                 "bounds": [0, 0, 100, 100],
                 "y_range": [0, 100],
-                "source_counts": {"xml": 1, "forensivision": 1},
-                "texts": {"combined": ["A"], "xml": ["A"], "forensivision": ["A"]},
+                "source_counts": {"xml": 1, "visual": 1},
+                "texts": {"combined": ["A"], "xml": ["A"], "visual": ["A"]},
                 "description": "A",
             }
         ]
         text = render_fused_description(regions)
         self.assertIn("r-001", text)
-        self.assertIn("sources(xml=1, vision=1)", text)
+        self.assertIn("sources(xml=1, visual=1)", text)
 
 
 if __name__ == "__main__":

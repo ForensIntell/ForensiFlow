@@ -9,11 +9,13 @@ import {
   CircleNotch,
   Play,
   WarningCircle,
+  DeviceMobile,
 } from "@phosphor-icons/react";
-import { caseTypes } from "../lib/mock-data";
+import { caseTypes } from "../lib/case-options";
 import type { Subtask } from "../types/stream";
 import { api, type ForensicPlan } from "../lib/api";
 import { StatusBanner } from "../components/states/StatusBanner";
+import { useAsyncData } from "../lib/hooks";
 
 type Step = "input" | "planning" | "confirm";
 
@@ -30,6 +32,8 @@ function generateSubtasks(plan: ForensicPlan): Subtask[] {
 
 export function NewTaskPage() {
   const navigate = useNavigate();
+  const { data: devicesData, loading: devicesLoading, error: devicesError } = useAsyncData(() => api.devices(), []);
+  const knownDevices = devicesData?.devices ?? [];
   const [step, setStep] = useState<Step>("input");
   const [form, setForm] = useState({
     caseName: "",
@@ -46,6 +50,7 @@ export function NewTaskPage() {
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
   const [startedJob, setStartedJob] = useState("");
+  const selectedDeviceSerial = form.devices.find(Boolean) || "";
 
   const handlePlan = async () => {
     setStep("planning");
@@ -60,7 +65,7 @@ export function NewTaskPage() {
         case_type: form.caseType,
         case_background: form.caseBackground,
         forensic_goals: form.forensicGoals,
-        device_serial: form.devices[0] || "",
+        device_serial: selectedDeviceSerial,
         allow_fallback: true,
       });
       setPlan(response.plan);
@@ -81,14 +86,20 @@ export function NewTaskPage() {
 
   const handleStart = async () => {
     if (!plan) return;
+    if (!selectedDeviceSerial) {
+      setError("需要设备序列号才能提交真实执行任务。");
+      return;
+    }
     setStarting(true);
     setError("");
     try {
       const response = await api.startTask({
         plan,
-        device_serial: form.devices[0] || "",
+        device_serial: selectedDeviceSerial,
         app_name: plan.forensic_plan[0]?.app_name || "",
         threshold: 0.75,
+        execution_mode: "planned",
+        case_name: form.caseName,
       });
       setStartedJob(response.job.id);
       setTimeout(() => navigate("/workspace"), 600);
@@ -164,10 +175,29 @@ export function NewTaskPage() {
             <textarea
               value={form.devices.join("\n")}
               onChange={(e) => setForm({ ...form, devices: e.target.value.split("\n").filter(Boolean) })}
-              placeholder={"<DEVICE_SERIAL>\nR5CT10YZ37Z\n（每行一台，可选）"}
+              placeholder={"emulator-5554\nAQMLUT3510003748\n（每行一台，可选）"}
               rows={2}
               className="rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft resize-none font-mono-data"
             />
+            {devicesLoading && <p className="text-[11px] text-text-dim">正在读取后端设备列表...</p>}
+            {devicesError && <p className="text-[11px] text-warning">设备列表读取失败：{devicesError}</p>}
+            {knownDevices.length > 0 && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {knownDevices.map((device) => (
+                  <button
+                    key={device.serial || device.model}
+                    type="button"
+                    onClick={() => setForm({ ...form, devices: [device.serial].filter(Boolean) })}
+                    disabled={!device.serial}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-[11px] text-text-muted hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <DeviceMobile size={12} />
+                    <span className="font-mono-data">{device.serial || "无序列号"}</span>
+                    <span>{device.status === "connected" ? "已连接" : "历史设备"}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="flex flex-col gap-1.5">
@@ -186,7 +216,7 @@ export function NewTaskPage() {
             <textarea
               value={form.forensicGoals}
               onChange={(e) => setForm({ ...form, forensicGoals: e.target.value })}
-              placeholder={"描述需要提取的具体证据，每行一个目标，例如：\n- 提取 WhatsApp 中与 kndxx 的所有聊天记录\n- 提取所有通话记录\n- 获取联系人列表\n- 提取浏览器历史记录"}
+              placeholder={"描述需要提取的具体证据，每行一个目标，例如：\n- 提取 Chrome 浏览历史记录\n- 提取 Gmail 收件箱邮件列表\n- 提取 Google Maps 最近地点信息\n- 获取联系人列表"}
               rows={4}
               className="rounded-xl border border-border bg-surface px-3 py-2.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent-soft resize-none leading-relaxed"
             />
@@ -214,7 +244,7 @@ export function NewTaskPage() {
             <StatusBanner
               tone="warning"
               title="当前使用本地安全预览规划"
-              description={warnings[0] || "后端 LLM 不可用，前端仍可确认任务并进入演示流程。"}
+              description={warnings[0] || "后端 LLM 不可用，当前规划来自后端本地 fallback。"}
             />
           )}
           {planSource === "llm" && <StatusBanner tone="success" title="已调用后端 LLM 规划能力" description="规划结果来自 ForensicPlanner。" />}
@@ -330,10 +360,13 @@ export function NewTaskPage() {
             <StatusBanner
               tone="warning"
               title="启动将调用真实后端执行入口"
-              description="当前规划为本地 fallback，适合演示流程。连接真实设备和 LLM 后建议重新生成规划。"
+              description="当前规划为后端本地 fallback。连接真实设备和 LLM 后建议重新生成规划。"
             />
           )}
           {startedJob && <StatusBanner tone="success" title="任务已提交" description={`后端作业 ID: ${startedJob}`} />}
+          {!selectedDeviceSerial && (
+            <StatusBanner tone="warning" title="缺少设备序列号" description="后端执行入口需要设备序列号；请返回输入信息选择或填写设备。" />
+          )}
           {error && (
             <div className="flex items-start gap-2 rounded-xl border border-danger/30 bg-danger-soft p-3 text-danger">
               <WarningCircle size={16} weight="fill" className="mt-0.5" />
@@ -353,7 +386,7 @@ export function NewTaskPage() {
               <dt className="text-text-muted">涉及应用</dt>
               <dd>{plan?.forensic_plan.map(p => p.app_name).join(", ") || "-"}</dd>
               <dt className="text-text-muted">设备 ({form.devices.length})</dt>
-              <dd className="font-mono-data">{form.devices.length > 0 ? form.devices.join(", ") : "待连接"}</dd>
+              <dd className="font-mono-data">{selectedDeviceSerial || "待填写"}</dd>
             </dl>
           </div>
 
@@ -367,7 +400,7 @@ export function NewTaskPage() {
             </button>
             <button
               onClick={handleStart}
-              disabled={!plan || starting}
+              disabled={!plan || starting || !selectedDeviceSerial}
               className="inline-flex items-center gap-2 rounded-xl bg-accent px-6 py-2.5 text-sm text-white hover:bg-accent-hover transition active:scale-[.98] disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {starting ? <CircleNotch size={16} className="animate-spin" /> : <Play size={16} weight="fill" />}

@@ -132,10 +132,11 @@ ForensiFlow/
 │   │   └── extract_and_query_apps.py # 设备应用提取工具
 │   ├── agents/
 │   │   └── codex_mobile/            # Codex Mobile Agent（探索生成 Agent）
+│   ├── perception/                  # ForensiVision 视觉感知模块
+│   │   └── _visual_backend/         # 本地视觉感知后端和模型标签
 │   └── scripts/                     # 专用取证脚本
 │
 ├── external/
-│   ├── ForensiVision/                # ForensiVision 视觉模型
 │   ├── models/                      # BGE 语义模型
 │   │   └── bge-large-zh-v1.5/
 │   └── rag_templates/               # RAG 模板库
@@ -143,14 +144,14 @@ ForensiFlow/
 │
 ├── docs/                            # 文档目录
 ├── page_agent_mobile/               # 旧命令和 import 兼容层
-├── forensiflow-web/                 # React/Vite 前端原型（当前使用 mock 数据）
+├── forensiflow-web/                 # React/Vite Web UI（通过 FastAPI adapter 调用真实后端）
 ├── tools/                           # Codex Agent 和辅助工具
 ├── data/                            # 运行时数据（gitignored）
 ├── .env.template                    # 环境配置模板
 └── requirements.txt                 # Python 依赖
 ```
 
-> 说明：当前 Python 执行层是主线实验路径；`forensiflow-web/` 还没有接入真实后端 API。
+> 说明：当前 Python 执行层是主线实验路径；`forensiflow-web/` 通过 `tools/forensiflow_demo_api.py` 暴露的 `/api/*` 接口读取真实设备、任务、证据、审计和报告数据。后端未提供的案件 CRUD、经验库管理、设置写入等功能在前端标注为暂未开放。
 
 ---
 
@@ -204,7 +205,24 @@ adb devices
 #### 5. 准备模型文件
 
 - **BGE 模型**：下载 `bge-large-zh-v1.5` 到 `external/models/bge-large-zh-v1.5/`
-- **ForensiVision 模型**（Replay Runner fallback 需要）：下载到 `external/ForensiVision/pt_model/`
+- **ForensiVision 模型**（Replay Runner fallback 需要）：大权重不随 Git 仓库提交，请从外部模型包下载后放到 `runner/forensiflow/perception/_visual_backend/pt_model/`
+
+ForensiVision 模型包下载：
+
+```text
+百度网盘: https://pan.baidu.com/s/1ioiguwzM_l-asrjl0P6PYQ?pwd=fbrj
+提取码: fbrj
+```
+
+下载并解压后，目录应包含：
+
+```bash
+runner/forensiflow/perception/_visual_backend/pt_model/
+├── yolo_mdl.pt
+├── yolo_vins_14_mdl.pt
+├── clip_mdl.pth
+└── clip_labels/
+```
 
 ### 基础使用
 
@@ -240,6 +258,28 @@ python tests/test_auto_planning.py
 # 查看 Codex Mobile Agent CLI
 python -m runner.forensiflow.agents.codex_mobile.cli --help
 ```
+
+#### 方式 4：启动 Web UI
+
+```bash
+# 终端 1：启动后端 API adapter
+python tools/forensiflow_demo_api.py --host 127.0.0.1 --port 8791
+
+# 终端 2：启动前端
+cd forensiflow-web
+npm install
+npm run dev
+```
+
+前端默认通过 Vite proxy 访问 `http://127.0.0.1:8791/api`。如果后端不在默认端口，创建 `forensiflow-web/.env.local`：
+
+```bash
+VITE_API_BASE_URL=http://127.0.0.1:8791
+# 或使用兼容变量
+VITE_FORENSIFLOW_API_BASE=http://127.0.0.1:8791
+```
+
+当前 Web UI 已接入 `tools/forensiflow_demo_api.py` 暴露的真实 `/api/*` 接口，用于设备状态、应用列表、任务规划、任务启动、运行状态、证据下载、审计会话和报告生成。后端暂未提供的案件 CRUD、经验库管理和设置写入在前端标注为暂未开放，页面展示只使用后端返回数据或明确空状态。
 
 ---
 
@@ -517,16 +557,26 @@ adb connect 192.168.1.100:5555
 
 ### ForensiVision 配置
 
-确保模型文件在正确位置：
+ForensiVision 视觉后端代码已经迁入仓库内的 `runner/forensiflow/perception/_visual_backend/`。
+模型权重不随 Git 提交，需单独下载后放到正确位置：
 
 ```bash
-~/models/ForensiVision/pt_model/
+runner/forensiflow/perception/_visual_backend/pt_model/
 ├── yolo_mdl.pt              # YOLO 检测模型
 ├── yolo_vins_14_mdl.pt      # YOLO VINS 模型
 ├── clip_mdl.pth             # CLIP 分类模型
 └── clip_labels/             # 分类标签目录
-    ├── android_labels.txt
-    └── ...
+    ├── icon_labels_chn.json
+    ├── icon_labels_en.json
+    └── icon_labels_final.json
+```
+
+当前本地权重文件的 SHA256：
+
+```bash
+clip_mdl.pth:        02aa5f38c2839c0b6c637bfbf04f949895ed750a93b056436ef0cc099512473f
+yolo_mdl.pt:         e13613b9c95edf45195441045c2827e67db791a337a348637fd21661d240b888
+yolo_vins_14_mdl.pt: fac2aff493d1bd5c23d96d499c2f5ba25a8f116b870c338b429a847a8edc15ed
 ```
 
 ---
@@ -659,9 +709,9 @@ elif app_category == "finance":
 **问题**：找不到 ForensiVision 模型文件
 
 **解决方案**：
-1. 确认模型文件路径：`~/models/ForensiVision/pt_model/`
+1. 确认模型文件路径：`runner/forensiflow/perception/_visual_backend/pt_model/`
 2. 检查文件完整性
-3. 确认文件权限：`chmod +r ~/models/ForensiVision/pt_model/*`
+3. 确认文件权限：`chmod +r runner/forensiflow/perception/_visual_backend/pt_model/*`
 
 ### Q3: API 调用失败
 
@@ -810,7 +860,7 @@ python run_all_tasks.py --task-file test_tasks.json
 
 ## 🙏 致谢
 
-- ForensiVision 团队
+- ForensiFlow 视觉感知模块维护者
 - Mimo/Momi API 服务
 - 所有贡献者
 

@@ -15,7 +15,7 @@ export default function CaseSidebar() {
           ForensiFlow 智能取证工作台
         </h1>
         <p className="text-sm text-accent font-medium">
-          Case #2026-0518-A
+          实时后端工作区
         </p>
       </div>
 
@@ -26,7 +26,7 @@ export default function CaseSidebar() {
       <SubtaskList />
 
       {/* Route Score */}
-      <RouteScoreBadge score={0.87} mode="targeted_object_extraction" />
+      <RouteScoreBadge />
 
       {/* App List */}
       <AppList />

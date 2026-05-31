@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { mockAuditSessions } from "../lib/mock-data";
 import type { AuditSession } from "../types/stream";
 import { api } from "../lib/api";
 import { useAsyncData } from "../lib/hooks";
@@ -62,7 +61,7 @@ export function AuditPage() {
   const { data, loading, error, refresh } = useAsyncData(() => api.audit(), []);
   const [expandedCase, setExpandedCase] = useState<string | null>(null);
   const [expandedDevice, setExpandedDevice] = useState<string | null>(null);
-  const sessionsSource = data?.sessions?.length ? data.sessions : mockAuditSessions;
+  const sessionsSource = data?.sessions ?? [];
 
   // Group by caseId
   const grouped = new Map<string, AuditSession[]>();
@@ -97,9 +96,9 @@ export function AuditPage() {
             正在读取审计链与运行事件...
           </div>
         )}
-        {error && <StatusBanner tone="danger" title="审计接口读取失败" description={`${error}。当前显示静态示例。`} />}
+        {error && <StatusBanner tone="danger" title="审计接口读取失败" description={error} />}
         {!loading && !error && !data?.sessions?.length && (
-          <StatusBanner tone="warning" title="暂无后端审计记录" description="未发现 evidence_chain.jsonl 或 events.jsonl，当前显示静态示例。" />
+          <StatusBanner tone="warning" title="暂无后端审计记录" description="未发现 evidence_chain.jsonl 或 events.jsonl。" />
         )}
         {!loading && !error && Boolean(data?.sessions?.length) && (
           <div className="flex items-center justify-between">

@@ -21,7 +21,7 @@ from .rag_template_matcher import RAGTemplateMatcher, RAGTemplateMatcherMock
 from .script_registry import ScriptRegistry
 from .xml_utils import XMLSimplifier
 from .config import DEFAULT_MIMO_API_BASE, DEFAULT_MIMO_MODEL, get_llm_config
-# ForensiVision 集成已移除，改用 API 调用
+from runner.forensiflow.perception import VISUAL_BACKEND_ROOT
 
 
 @dataclass
@@ -66,7 +66,7 @@ class TaskSchedulerVT:
         CHATGLM_DEFAULT_MODEL = "glm-4-flash"
 
         # ForensiVision 路径配置
-        VISIONTASKER_PATH = str(Path(__file__).resolve().parents[3] / "external" / "ForensiVision")
+        VISUAL_BACKEND_PATH = str(VISUAL_BACKEND_ROOT)
         MODEL_PATH = "pt_model/yolo_mdl.pt"
         MODEL_PREFIX = "pt_model/yolo_vins_"
         MODEL_SUFFIX = "_mdl.pt"
@@ -147,10 +147,10 @@ class TaskSchedulerVT:
         self.xml_simplifier = XMLSimplifier(max_length=12000)
 
         # ForensiVision 模块引用（直接导入，保持模型常驻内存）
-        self._vt_models_loaded = False
-        self._vt_models = None  # 存储 (_model_ver, _model_det, _model_cls, _preprocess, _ocr)
-        self._vt_module_path = self._Config.VISIONTASKER_PATH
-        self._vt_process_img = None  # process_img 函数引用
+        self._visual_models_loaded = False
+        self._visual_models = None  # 存储 (_model_ver, _model_det, _model_cls, _preprocess, _ocr)
+        self._visual_module_path = self._Config.VISUAL_BACKEND_PATH
+        self._visual_process_img = None  # process_img 函数引用
 
         # Planner configuration: all OpenAI-compatible model calls share the same Mimo/Momi config.
         llm_config = get_llm_config(
@@ -311,9 +311,9 @@ class TaskSchedulerVT:
 
         return self._rag_matcher
 
-    def _load_forensivision_models(self):
+    def _load_visual_models(self):
         """加载 ForensiVision 模型（整个任务期间只加载一次）"""
-        if self._vt_models_loaded:
+        if self._visual_models_loaded:
             logging.info("ForensiVision 模型已加载，跳过")
             return True
 
@@ -329,11 +329,11 @@ class TaskSchedulerVT:
             original_cwd = os.getcwd()
 
             # 切换到 ForensiVision 目录（模型文件使用相对路径）
-            os.chdir(self._vt_module_path)
+            os.chdir(self._visual_module_path)
 
             # 将 ForensiVision 添加到 sys.path（GUI.py 也会自己添加，但这里添加更保险）
-            if self._vt_module_path not in sys.path:
-                sys.path.insert(0, self._vt_module_path)
+            if self._visual_module_path not in sys.path:
+                sys.path.insert(0, self._visual_module_path)
 
             try:
                 # 导入配置
@@ -342,17 +342,26 @@ class TaskSchedulerVT:
 
                 # 将相对路径转换为绝对路径（因为后续会切换工作目录）
                 if not os.path.isabs(label_path_dir):
-                    label_path_dir = os.path.join(self._vt_module_path, label_path_dir)
+                    label_path_dir = os.path.join(self._visual_module_path, label_path_dir)
 
                 # 导入模型加载函数
                 import core.import_models as import_models
 
-                vt_mode = os.getenv("FORENSIFLOW_VT_MODE", "auto").strip().lower()
-                if vt_mode in {"ocr", "ocr_only", "light"} or (
-                    vt_mode == "auto" and self._available_memory_gb() < float(os.getenv("FORENSIFLOW_VT_FULL_MIN_MEM_GB", "5.5"))
+                visual_mode = os.getenv(
+                    "FORENSIFLOW_VISUAL_MODE",
+                    os.getenv("FORENSIFLOW_VT_MODE", "auto"),
+                ).strip().lower()
+                min_mem_gb = float(
+                    os.getenv(
+                        "FORENSIFLOW_VISUAL_FULL_MIN_MEM_GB",
+                        os.getenv("FORENSIFLOW_VT_FULL_MIN_MEM_GB", "5.5"),
+                    )
+                )
+                if visual_mode in {"ocr", "ocr_only", "light"} or (
+                    visual_mode == "auto" and self._available_memory_gb() < min_mem_gb
                 ):
                     logging.info("🔎 ForensiVision 使用 OCR-only 轻量兜底模式，避免完整模型加载触发 OOM")
-                    loaded = self._load_forensivision_ocr_fallback(import_models, label_path_dir)
+                    loaded = self._load_visual_ocr_fallback(import_models, label_path_dir)
                     if loaded:
                         return True
 
@@ -371,19 +380,19 @@ class TaskSchedulerVT:
                 from core.process_img_script import process_img
 
                 # 保存模型引用
-                self._vt_models = (_model_ver, _model_det, _model_cls, _preprocess, _ocr)
-                self._vt_process_img = process_img
-                self._vt_models_loaded = True
+                self._visual_models = (_model_ver, _model_det, _model_cls, _preprocess, _ocr)
+                self._visual_process_img = process_img
+                self._visual_models_loaded = True
 
                 # 保存配置到实例变量
-                self._vt_alg = alg
-                self._vt_accurate_ocr = accurate_ocr
-                self._vt_label_path_dir = label_path_dir
-                self._vt_high_conf_flag = high_conf_flag
-                self._vt_clean_save = clean_save
-                self._vt_ocr_save_flag = ocr_save_flag
-                self._vt_ocr_output_only = ocr_output_only
-                self._vt_workflow_only = workflow_only
+                self._visual_alg = alg
+                self._visual_accurate_ocr = accurate_ocr
+                self._visual_label_path_dir = label_path_dir
+                self._visual_high_conf_flag = high_conf_flag
+                self._visual_clean_save = clean_save
+                self._visual_ocr_save_flag = ocr_save_flag
+                self._visual_ocr_output_only = ocr_output_only
+                self._visual_workflow_only = workflow_only
 
             finally:
                 # 恢复原始工作目录
@@ -411,7 +420,7 @@ class TaskSchedulerVT:
             pass
         return 0.0
 
-    def _load_forensivision_ocr_fallback(self, import_models, label_path_dir: str) -> bool:
+    def _load_visual_ocr_fallback(self, import_models, label_path_dir: str) -> bool:
         """Load a lightweight OCR-backed ForensiVision fallback.
 
         The full ForensiVision path loads PaddleOCR, YOLO and CLIP. On memory
@@ -426,17 +435,17 @@ class TaskSchedulerVT:
             from paddleocr import PaddleOCR
 
             ocr = PaddleOCR(use_angle_cls=True, show_log=False)
-            self._vt_models = ("ocr_only", None, None, None, ocr)
-            self._vt_process_img = self._process_img_ocr_fallback
-            self._vt_models_loaded = True
-            self._vt_alg = "ocr_only"
-            self._vt_accurate_ocr = False
-            self._vt_label_path_dir = label_path_dir
-            self._vt_high_conf_flag = False
-            self._vt_clean_save = True
-            self._vt_ocr_save_flag = "save"
-            self._vt_ocr_output_only = True
-            self._vt_workflow_only = True
+            self._visual_models = ("ocr_only", None, None, None, ocr)
+            self._visual_process_img = self._process_img_ocr_fallback
+            self._visual_models_loaded = True
+            self._visual_alg = "ocr_only"
+            self._visual_accurate_ocr = False
+            self._visual_label_path_dir = label_path_dir
+            self._visual_high_conf_flag = False
+            self._visual_clean_save = True
+            self._visual_ocr_save_flag = "save"
+            self._visual_ocr_output_only = True
+            self._visual_workflow_only = True
             logging.info("✓ ForensiVision OCR-only 兜底加载成功")
             return True
         except Exception as exc:
@@ -539,9 +548,9 @@ class TaskSchedulerVT:
             examples.append("```json\n" + json.dumps(example_obj, ensure_ascii=False, indent=2) + "\n```\n")
         return "\n".join(examples)
 
-    def _unload_forensivision_models(self):
+    def _unload_visual_models(self):
         """释放 ForensiVision 模型资源"""
-        if not self._vt_models_loaded:
+        if not self._visual_models_loaded:
             return
 
         try:
@@ -550,9 +559,9 @@ class TaskSchedulerVT:
             logging.info(f"{'='*60}")
 
             # 清空模型引用
-            self._vt_models = None
-            self._vt_process_img = None
-            self._vt_models_loaded = False
+            self._visual_models = None
+            self._visual_process_img = None
+            self._visual_models_loaded = False
 
             # 使用垃圾回收释放内存
             import gc
@@ -787,28 +796,28 @@ class TaskSchedulerVT:
             ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_check_{self.step}.json"))
 
             original_cwd = os.getcwd()
-            os.chdir(self._vt_module_path)
+            os.chdir(self._visual_module_path)
 
             try:
-                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._vt_models
-                result_js = self._vt_process_img(
-                    label_path_dir=self._vt_label_path_dir,
+                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._visual_models
+                result_js = self._visual_process_img(
+                    label_path_dir=self._visual_label_path_dir,
                     img_path=screenshot_path,
                     output_root=self.run_data_dir,
                     layout_json_dir=self.run_data_dir,
-                    high_conf_flag=self._vt_high_conf_flag,
-                    alg=self._vt_alg,
-                    clean_save=self._vt_clean_save,
+                    high_conf_flag=self._visual_high_conf_flag,
+                    alg=self._visual_alg,
+                    clean_save=self._visual_clean_save,
                     plot_show=False,
-                    ocr_save_flag=self._vt_ocr_save_flag,
+                    ocr_save_flag=self._visual_ocr_save_flag,
                     model_ver=_model_ver,
                     model_det=_model_det,
                     model_cls=_model_cls,
                     preprocess=_preprocess,
                     pd_free_ocr=_ocr,
-                    ocr_only=self._vt_ocr_output_only,
-                    workflow_only=self._vt_workflow_only,
-                    accurate_ocr=self._vt_accurate_ocr
+                    ocr_only=self._visual_ocr_output_only,
+                    workflow_only=self._visual_workflow_only,
+                    accurate_ocr=self._visual_accurate_ocr
                 )
             finally:
                 os.chdir(original_cwd)
@@ -1252,29 +1261,29 @@ class TaskSchedulerVT:
             ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_{self.step}.json"))
 
             original_cwd = os.getcwd()
-            os.chdir(self._vt_module_path)
+            os.chdir(self._visual_module_path)
 
             try:
-                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._vt_models
+                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._visual_models
 
-                result_js = self._vt_process_img(
-                    label_path_dir=self._vt_label_path_dir,
+                result_js = self._visual_process_img(
+                    label_path_dir=self._visual_label_path_dir,
                     img_path=screenshot_path,
                     output_root=self.run_data_dir,
                     layout_json_dir=self.run_data_dir,
-                    high_conf_flag=self._vt_high_conf_flag,
-                    alg=self._vt_alg,
-                    clean_save=self._vt_clean_save,
+                    high_conf_flag=self._visual_high_conf_flag,
+                    alg=self._visual_alg,
+                    clean_save=self._visual_clean_save,
                     plot_show=False,
-                    ocr_save_flag=self._vt_ocr_save_flag,
+                    ocr_save_flag=self._visual_ocr_save_flag,
                     model_ver=_model_ver,
                     model_det=_model_det,
                     model_cls=_model_cls,
                     preprocess=_preprocess,
                     pd_free_ocr=_ocr,
-                    ocr_only=self._vt_ocr_output_only,
-                    workflow_only=self._vt_workflow_only,
-                    accurate_ocr=self._vt_accurate_ocr
+                    ocr_only=self._visual_ocr_output_only,
+                    workflow_only=self._visual_workflow_only,
+                    accurate_ocr=self._visual_accurate_ocr
                 )
             finally:
                 os.chdir(original_cwd)
@@ -1367,9 +1376,9 @@ class TaskSchedulerVT:
         """
         import time
 
-        if not self._vt_models_loaded or self._vt_models is None or self._vt_process_img is None:
+        if not self._visual_models_loaded or self._visual_models is None or self._visual_process_img is None:
             logging.info("    🔄 ForensiVision 模型未就绪，尝试重新加载...")
-            if not self._load_forensivision_models():
+            if not self._load_visual_models():
                 logging.error("    ✗ ForensiVision 模型不可用，无法执行视觉兜底决策")
                 return False
 
@@ -1385,28 +1394,28 @@ class TaskSchedulerVT:
             ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_{self.step}_iter{iteration}.json"))
 
             original_cwd = os.getcwd()
-            os.chdir(self._vt_module_path)
+            os.chdir(self._visual_module_path)
 
             try:
-                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._vt_models
-                result_js = self._vt_process_img(
-                    label_path_dir=self._vt_label_path_dir,
+                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._visual_models
+                result_js = self._visual_process_img(
+                    label_path_dir=self._visual_label_path_dir,
                     img_path=screenshot_path,
                     output_root=self.run_data_dir,
                     layout_json_dir=self.run_data_dir,
-                    high_conf_flag=self._vt_high_conf_flag,
-                    alg=self._vt_alg,
-                    clean_save=self._vt_clean_save,
+                    high_conf_flag=self._visual_high_conf_flag,
+                    alg=self._visual_alg,
+                    clean_save=self._visual_clean_save,
                     plot_show=False,
-                    ocr_save_flag=self._vt_ocr_save_flag,
+                    ocr_save_flag=self._visual_ocr_save_flag,
                     model_ver=_model_ver,
                     model_det=_model_det,
                     model_cls=_model_cls,
                     preprocess=_preprocess,
                     pd_free_ocr=_ocr,
-                    ocr_only=self._vt_ocr_output_only,
-                    workflow_only=self._vt_workflow_only,
-                    accurate_ocr=self._vt_accurate_ocr
+                    ocr_only=self._visual_ocr_output_only,
+                    workflow_only=self._visual_workflow_only,
+                    accurate_ocr=self._visual_accurate_ocr
                 )
             finally:
                 os.chdir(original_cwd)
@@ -1713,28 +1722,28 @@ class TaskSchedulerVT:
             ui_json_path = os.path.abspath(os.path.join(self.run_data_dir, f"ui_{self.step}.json"))
 
             original_cwd = os.getcwd()
-            os.chdir(self._vt_module_path)
+            os.chdir(self._visual_module_path)
 
             try:
-                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._vt_models
-                result_js = self._vt_process_img(
-                    label_path_dir=self._vt_label_path_dir,
+                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._visual_models
+                result_js = self._visual_process_img(
+                    label_path_dir=self._visual_label_path_dir,
                     img_path=screenshot_path,
                     output_root=self.run_data_dir,
                     layout_json_dir=self.run_data_dir,
-                    high_conf_flag=self._vt_high_conf_flag,
-                    alg=self._vt_alg,
-                    clean_save=self._vt_clean_save,
+                    high_conf_flag=self._visual_high_conf_flag,
+                    alg=self._visual_alg,
+                    clean_save=self._visual_clean_save,
                     plot_show=False,
-                    ocr_save_flag=self._vt_ocr_save_flag,
+                    ocr_save_flag=self._visual_ocr_save_flag,
                     model_ver=_model_ver,
                     model_det=_model_det,
                     model_cls=_model_cls,
                     preprocess=_preprocess,
                     pd_free_ocr=_ocr,
-                    ocr_only=self._vt_ocr_output_only,
-                    workflow_only=self._vt_workflow_only,
-                    accurate_ocr=self._vt_accurate_ocr
+                    ocr_only=self._visual_ocr_output_only,
+                    workflow_only=self._visual_workflow_only,
+                    accurate_ocr=self._visual_accurate_ocr
                 )
             finally:
                 os.chdir(original_cwd)
@@ -2131,7 +2140,7 @@ class TaskSchedulerVT:
         logging.info(f"{'='*60}\n")
 
         # 3. 构建消息（使用原始格式）
-        messages = self._build_forensivision_messages(prompt)
+        messages = self._build_visual_perception_messages(prompt)
 
         # 4. 调用 LLM
         response = self.planner_client.chat.completions.create(
@@ -2280,7 +2289,7 @@ class TaskSchedulerVT:
                     for step in steps
                 )
                 if needs_visual_matching:
-                    self._load_forensivision_models()
+                    self._load_visual_models()
 
                 # 5. 逐步执行步骤序列
                 logging.info(f"\n{'='*60}")
@@ -2362,11 +2371,11 @@ class TaskSchedulerVT:
                 }
             finally:
                 # 释放 ForensiVision 模型资源
-                self._unload_forensivision_models()
+                self._unload_visual_models()
 
         # 原有的逐步决策模式（保留兼容性）
         # 加载 ForensiVision 模型（整个任务期间只加载一次）
-        if not self._load_forensivision_models():
+        if not self._load_visual_models():
             return {
                 "completed": False,
                 "total_steps": 0,
@@ -2398,7 +2407,7 @@ class TaskSchedulerVT:
 
         finally:
             # 释放 ForensiVision 模型资源
-            self._unload_forensivision_models()
+            self._unload_visual_models()
 
         # Save final results
         self.storage_module.save_actions(app, old_task, task, self.actions)
@@ -2526,7 +2535,7 @@ class TaskSchedulerVT:
         logging.info(f"    Running ForensiVision UI detection...")
 
         # 检查模型是否已加载
-        if not self._vt_models_loaded or self._vt_process_img is None:
+        if not self._visual_models_loaded or self._visual_process_img is None:
             logging.error("    ForensiVision models not loaded!")
             context["ui_detection_error"] = "Models not loaded"
             context["stop"] = True
@@ -2550,31 +2559,31 @@ class TaskSchedulerVT:
 
             # 临时切换到 ForensiVision 目录（process_img 内部使用相对路径）
             original_cwd = os.getcwd()
-            os.chdir(self._vt_module_path)
+            os.chdir(self._visual_module_path)
 
             try:
                 # 解包模型
-                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._vt_models
+                _model_ver, _model_det, _model_cls, _preprocess, _ocr = self._visual_models
 
                 # 调用检测函数
-                result_js = self._vt_process_img(
-                    label_path_dir=self._vt_label_path_dir,
+                result_js = self._visual_process_img(
+                    label_path_dir=self._visual_label_path_dir,
                     img_path=screenshot_path,
                     output_root=self.run_data_dir,
                     layout_json_dir=self.run_data_dir,
-                    high_conf_flag=self._vt_high_conf_flag,
-                    alg=self._vt_alg,
-                    clean_save=self._vt_clean_save,
+                    high_conf_flag=self._visual_high_conf_flag,
+                    alg=self._visual_alg,
+                    clean_save=self._visual_clean_save,
                     plot_show=False,
-                    ocr_save_flag=self._vt_ocr_save_flag,
+                    ocr_save_flag=self._visual_ocr_save_flag,
                     model_ver=_model_ver,
                     model_det=_model_det,
                     model_cls=_model_cls,
                     preprocess=_preprocess,
                     pd_free_ocr=_ocr,
-                    ocr_only=self._vt_ocr_output_only,
-                    workflow_only=self._vt_workflow_only,
-                    accurate_ocr=self._vt_accurate_ocr
+                    ocr_only=self._visual_ocr_output_only,
+                    workflow_only=self._visual_workflow_only,
+                    accurate_ocr=self._visual_accurate_ocr
                 )
             finally:
                 # 恢复工作目录
@@ -2646,7 +2655,7 @@ class TaskSchedulerVT:
             logging.info(f"{'='*60}\n")
 
             # 构建 ForensiVision 风格的消息（包含 Few-shot Learning）
-            messages = self._build_forensivision_messages(prompt)
+            messages = self._build_visual_perception_messages(prompt)
 
             # Call ChatGLM API
             response = self.planner_client.chat.completions.create(
@@ -3556,7 +3565,7 @@ class TaskSchedulerVT:
         else:
             return f"步骤{step_index}: {action}"
 
-    def _build_forensivision_messages(self, user_prompt: str) -> List[Dict[str, str]]:
+    def _build_visual_perception_messages(self, user_prompt: str) -> List[Dict[str, str]]:
         """
         Build messages with clear format requirements.
 

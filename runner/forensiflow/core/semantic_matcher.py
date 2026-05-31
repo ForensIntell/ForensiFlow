@@ -134,7 +134,7 @@ class SemanticMatcher:
 
         Args:
             target: 目标查询
-            candidates: 候选元素列表（ForensiVision 输出格式）
+            candidates: 候选元素列表（视觉感知输出格式）
 
         Returns:
             MatchResult 包含最佳匹配元素、分数和所有候选
@@ -218,17 +218,17 @@ class SemanticMatcher:
 
     def _build_element_text(self, element: Dict[str, Any]) -> str:
         """
-        构建元素描述文本（适配 ForensiVision 格式）
+        构建元素描述文本（适配视觉感知输出格式）
 
         Args:
-            element: 元素字典（ForensiVision 格式）
+            element: 元素字典（视觉感知格式）
 
         Returns:
             描述文本
         """
         parts = []
 
-        # ForensiVision 格式的字段
+        # 视觉感知格式的字段
         if element.get('text_content'):
             parts.append(f"文字:{element['text_content']}")
 

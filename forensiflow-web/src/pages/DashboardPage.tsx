@@ -1,20 +1,24 @@
-import { DeviceMobile, ListChecks, Archive, FolderOpen, ArrowRight, CircleNotch, WarningCircle } from "@phosphor-icons/react";
-import { mockCases } from "../lib/mock-data";
+import { DeviceMobile, ListChecks, Archive, ClockCounterClockwise, ArrowRight, CircleNotch, WarningCircle } from "@phosphor-icons/react";
 import { Link } from "react-router-dom";
-import { api } from "../lib/api";
+import { api, apiUrl } from "../lib/api";
 import { useAsyncData } from "../lib/hooks";
 import { StatusBanner } from "../components/states/StatusBanner";
+import { EmptyState } from "../components/states/EmptyState";
 
-const statusColor: Record<string, string> = { active: "bg-accent-soft text-accent", closed: "bg-success-soft text-success", pending: "bg-warning-soft text-warning" };
-const statusLabel: Record<string, string> = { active: "进行中", closed: "已结案", pending: "待启动" };
+const jobStatusLabel: Record<string, string> = {
+  queued: "排队中",
+  running: "执行中",
+  succeeded: "已完成",
+  failed: "失败",
+};
 
 export function DashboardPage() {
   const { data, loading, error, refresh } = useAsyncData(() => api.dashboard(), []);
   const metrics = [
     { label: "已连接设备", value: String(data?.metrics.connectedDevices ?? 0), icon: DeviceMobile, accent: "text-info", bg: "bg-info-soft" },
-    { label: "活跃案件", value: String(mockCases.filter(c => c.status === "active").length), icon: FolderOpen, accent: "text-accent", bg: "bg-accent-soft" },
     { label: "后端作业", value: String(data?.metrics.runningJobs ?? 0), icon: ListChecks, accent: "text-success", bg: "bg-success-soft" },
     { label: "证据条目", value: String(data?.metrics.evidenceItems ?? 0), icon: Archive, accent: "text-warning", bg: "bg-warning-soft" },
+    { label: "审计会话", value: String(data?.metrics.auditSessions ?? 0), icon: ClockCounterClockwise, accent: "text-accent", bg: "bg-accent-soft" },
   ];
 
   return (
@@ -25,7 +29,7 @@ export function DashboardPage() {
           ForensiFlow 控制台
         </h1>
         <p className="text-sm text-text-muted max-w-[65ch] mt-0.5">
-          查看设备连接状态、案件执行进度、证据采集结果与审计链完整性。
+          查看真实后端返回的设备连接状态、作业执行进度、证据采集结果与审计链完整性。
         </p>
       </header>
 
@@ -40,12 +44,11 @@ export function DashboardPage() {
           <StatusBanner
             tone="danger"
             title="后端 API 暂不可用"
-            description={`${error}。页面保留静态案件示例，但设备、证据和作业状态需要启动后端。`}
+            description={`${error}。请先启动 tools/forensiflow_demo_api.py。`}
           />
         )}
       </div>
 
-      {/* Metrics */}
       <section className="mt-8 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3.5">
         {metrics.map((m, i) => (
           <div
@@ -53,10 +56,8 @@ export function DashboardPage() {
             className="animate-fade-slide-up rounded-2xl border border-border-light bg-surface p-5 panel-shadow card-hover"
             style={{ animationDelay: `${i * 60}ms` }}
           >
-            <div className="flex items-start justify-between">
-              <div className={`rounded-xl ${m.bg} p-2.5 ${m.accent}`}>
-                <m.icon size={20} weight="duotone" />
-              </div>
+            <div className={`w-fit rounded-xl ${m.bg} p-2.5 ${m.accent}`}>
+              <m.icon size={20} weight="duotone" />
             </div>
             <p className="mt-3 text-[11px] text-text-dim uppercase tracking-wide">{m.label}</p>
             <p className="mt-1 text-[1.75rem] font-semibold tracking-tight font-mono-data leading-none">
@@ -93,51 +94,54 @@ export function DashboardPage() {
         </section>
       )}
 
-      {/* Recent cases */}
       <section className="mt-8">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-medium uppercase tracking-widest text-text-dim">最近案件</h2>
-          <Link to="/cases" className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition">
-            查看全部 <ArrowRight size={12} />
+          <h2 className="text-xs font-medium uppercase tracking-widest text-text-dim">最近证据</h2>
+          <Link to="/evidence" className="inline-flex items-center gap-1 text-xs text-accent hover:text-accent-hover transition">
+            查看证据库 <ArrowRight size={12} />
           </Link>
         </div>
         <div className="rounded-2xl border border-border-light bg-surface overflow-hidden panel-shadow">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-[11px] text-text-dim text-left uppercase tracking-wide">
-                <th className="px-5 py-3 font-medium">编号</th>
-                <th className="px-5 py-3 font-medium">案件名称</th>
-                <th className="px-5 py-3 font-medium">类型</th>
-                <th className="px-5 py-3 font-medium">状态</th>
-                <th className="px-5 py-3 font-medium">证据</th>
-                <th className="px-5 py-3 font-medium">更新时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mockCases.slice(0, 5).map((c, i) => (
-                <tr
-                  key={c.id}
-                  className="animate-fade-slide-up border-b border-border-light last:border-0 hover:bg-accent-glow/30 transition cursor-pointer"
-                  style={{ animationDelay: `${200 + i * 50}ms` }}
-                >
-                  <td className="px-5 py-3 font-mono-data text-[11px] text-text-dim">{c.id}</td>
-                  <td className="px-5 py-3">
-                    <Link to="/cases" className="hover:text-accent transition font-medium">{c.name}</Link>
-                  </td>
-                  <td className="px-5 py-3">
-                    <span className="rounded-md bg-bg px-1.5 py-0.5 text-xs text-text-muted">{c.caseType}</span>
-                  </td>
-                  <td className="px-5 py-3">
-                    <span className={`inline-block rounded-full px-2 py-0.5 text-[11px] font-medium ${statusColor[c.status]}`}>
-                      {statusLabel[c.status]}
-                    </span>
-                  </td>
-                  <td className="px-5 py-3 font-mono-data text-xs">{c.devices.reduce((s, d) => s + d.evidenceCount, 0)}</td>
-                  <td className="px-5 py-3 font-mono-data text-[11px] text-text-dim">{c.updatedAt}</td>
+          {!data?.recentEvidence?.length ? (
+            <EmptyState title="暂无后端证据" description="后端未发现取证任务产出的 records.json。" />
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-[11px] text-text-dim text-left uppercase tracking-wide">
+                  <th className="px-5 py-3 font-medium">类型</th>
+                  <th className="px-5 py-3 font-medium">任务</th>
+                  <th className="px-5 py-3 font-medium">应用</th>
+                  <th className="px-5 py-3 font-medium">记录数</th>
+                  <th className="px-5 py-3 font-medium">时间</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {data.recentEvidence.slice(0, 5).map((ev, i) => (
+                  <tr
+                    key={ev.id}
+                    className="animate-fade-slide-up border-b border-border-light last:border-0 hover:bg-accent-glow/30 transition"
+                    style={{ animationDelay: `${200 + i * 50}ms` }}
+                  >
+                    <td className="px-5 py-3">
+                      <span className="rounded-md bg-info-soft px-1.5 py-0.5 text-xs text-info">{ev.evidenceType}</span>
+                    </td>
+                    <td className="px-5 py-3">
+                      {ev.downloadUrl ? (
+                        <a href={apiUrl(ev.downloadUrl)} target="_blank" rel="noreferrer" className="hover:text-accent transition font-medium">
+                          {ev.summary}
+                        </a>
+                      ) : (
+                        <span className="font-medium">{ev.summary}</span>
+                      )}
+                    </td>
+                    <td className="px-5 py-3 text-text-muted">{ev.app}</td>
+                    <td className="px-5 py-3 font-mono-data text-xs">{ev.recordCount ?? "-"}</td>
+                    <td className="px-5 py-3 font-mono-data text-[11px] text-text-dim">{ev.timestamp}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </section>
 
@@ -149,8 +153,8 @@ export function DashboardPage() {
               <div key={job.id} className="flex items-center gap-3 border-b border-border-light last:border-0 px-5 py-3 text-sm">
                 {job.status === "running" ? <CircleNotch size={15} className="animate-spin text-accent" /> : job.status === "failed" ? <WarningCircle size={15} className="text-danger" /> : <ListChecks size={15} className="text-success" />}
                 <span className="font-mono-data text-xs text-text-dim">{job.id.slice(0, 10)}</span>
-                <span className="text-text-muted">{job.appName || "计划执行"}</span>
-                <span className="ml-auto rounded-md bg-bg px-2 py-0.5 text-xs">{job.status}</span>
+                <span className="text-text-muted">{job.caseName || job.appName || "计划执行"}</span>
+                <span className="ml-auto rounded-md bg-bg px-2 py-0.5 text-xs">{jobStatusLabel[job.status] || job.status}</span>
               </div>
             ))}
           </div>
