@@ -6,14 +6,20 @@ contributions for public project documentation and achievement reporting.
 
 ## Team Contributions
 
-- **kndxx00**: Led the project architecture and core implementation, including
-  the mobile forensic automation workflow, scheduler integration, Codex-based
-  agent connection, experiment execution, repository maintenance, and public
-  release preparation.
-- **Cx3300-zyl**: Participated in project collaboration, repository verification,
-  and open-source contribution support.
-- **knusprigfisch**: Participated in project plan discussions, material
-  organization, functional testing, and achievement-submission support.
+The current ForensiFlow implementation was jointly developed by four team
+members after the project had been refactored into its present form. Earlier
+prototype references were fully reorganized into the current self-owned codebase.
+Project submission and repository maintenance were primarily handled by
+`kndxx00`.
+
+- **kndxx00**: Led the architecture design, core implementation, repository
+  maintenance, experiment coordination, and release preparation.
+- **Cx3300-zyl**: Participated in module development, validation, and workflow
+  verification.
+- **noahtie**: Participated in feature discussion, experimental validation, and
+  documentation support.
+- **602198790**: Participated in implementation review, testing support, and
+  result organization.
 
 ## Notes
 
